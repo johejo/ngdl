@@ -33,12 +33,13 @@ if __name__ == '__main__':
         print('SUCCESS 3', file=sys.stderr)
 
     # assert Downloader(urls=['http://165.242.111.77/100MB'], logger=local_logger)
-    # assert Downloader(urls=['http://165.242.111.93:8080/100MB'], logger=local_logger)
-    # assert Downloader(urls=['https://165.242.111.93:8081/100MB'], logger=local_logger)
-    try:
-        assert Downloader(urls=['https://www.hiroshima-cu.ac.jp/'], logger=local_logger)
-    except NoContentLength:
-        print('SUCCESS 4', file=sys.stderr)
+    assert Downloader(urls=['http://165.242.111.93:8080/100MB'], logger=local_logger)
+    assert Downloader(urls=['https://165.242.111.93:8081/100MB'], logger=local_logger)
+
+    # try:
+    #     assert Downloader(urls=['https://www.hiroshima-cu.ac.jp/'], logger=local_logger)
+    # except NoContentLength:
+    #     print('SUCCESS 4', file=sys.stderr)
 
     assert Downloader(urls=['http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.04/ubuntu-17.04-server-amd64.iso'], logger=local_logger)
 
