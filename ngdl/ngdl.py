@@ -169,7 +169,10 @@ class Downloader(object):
             else:
                 order, body = future.result()
                 self.logger.debug(msg='Successfully get result {}'.format(order))
-                self._data[order] = body
+                try:
+                    self._data[order] = body
+                except:
+                    break
                 self._future_resp.pop(i)
 
         b = bytearray()
@@ -178,7 +181,8 @@ class Downloader(object):
             if self._data[i] is None:
                 break
             else:
-                b += self._data.pop(i)
+                b += self._data[i]
+                self._data[i] = None
                 i += 1
         self._received_index = i
 
