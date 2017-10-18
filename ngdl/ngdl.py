@@ -22,20 +22,20 @@ class Downloader(object):
     def __init__(self, urls, split_size=DEFAULT_SPLIT_SIZE, *, parallel_num=None, logger=local_logger):
         """
 
-        :param list urls:
+        :param list urls: URL list
         :param int parallel_num:
         :param int split_size:
-        :param logger:
+        :param logger logger:
         """
 
         self.logger = logger
-        self._split_size = split_size
 
         self._original_urls = urls
         self._urls = []  # type: List[ParseResult]
         self._sessions = []  # type: List[requests.Session]
         self._ports = []
         self._length_list = []
+        self._is_started = False
 
         for url in urls:
             self._sessions.append(self._check_url(url))
@@ -44,6 +44,11 @@ class Downloader(object):
         if map_all(self._length_list) is False:
             raise FileSizeError
         length = int(self._length_list[0])
+
+        if length > split_size:
+            self._split_size = length // len(urls)
+        else:
+            self._split_size = split_size
 
         begin = 0
         self._request_num = length // split_size
@@ -73,13 +78,13 @@ class Downloader(object):
         self._executor = ThreadPoolExecutor(max_workers=parallel_num)
         self._counts = deque()
 
-        self.logger.debug(msg='Successfully initialized')
+        self.logger.debug('Successfully initialized')
 
     def _check_url(self, url):
         """
 
         :param url: str
-        :return: conn
+        :return: sess requests.Session
         """
         parsed_url = urlparse(url)  # type: ParseResult
 
@@ -101,9 +106,9 @@ class Downloader(object):
         else:
             raise PortError
 
-        return self._check_status(url, port)  # type: requests.Session
+        return self._check_host(url, port)  # type: requests.Session
 
-    def _check_status(self, url, port):
+    def _check_host(self, url, port):
         """
 
         :param url: str
@@ -120,12 +125,12 @@ class Downloader(object):
 
         if 301 <= status <= 303 or 307 <= status <= 308:
             location = resp.headers['Location']
-            self.logger.debug(msg='Host is redirected to {0}'.format(location))
+            self.logger.debug('Host {} is redirected to {}'.format(url, location))
             sess = self._check_url(url=location)
             resp = sess.head(url=location)
 
         elif status != 200:
-            self.logger.debug(msg='Invalid status code: {0}'.format(str(status)))
+            self.logger.debug('Invalid status code: {0}'.format(str(status)))
             raise StatusCodeError
 
         try:
@@ -146,6 +151,7 @@ class Downloader(object):
         for i in range(self._request_num):
             self._future_resp.append(self._executor.submit(self._request))
         self.logger.debug('SUBMITTED')
+        self._is_started = True
 
     def _create_new_session(self):
         rand = randrange(len(self._sessions))
@@ -190,6 +196,10 @@ class Downloader(object):
 
         :return: bytes
         """
+
+        if not self._is_started:
+            self.start_download()
+
         i = 0
         while i < len(self._future_resp):
             if self._future_resp[i].running():
@@ -197,7 +207,7 @@ class Downloader(object):
             else:
                 try:
                     order, content = self._future_resp[i].result(timeout=0)
-                    self.logger.debug(msg='Successfully get result {}'.format(order))
+                    self.logger.debug('Successfully get result {}'.format(order))
                     self._data[order] = content
                     self._future_resp.remove(self._future_resp[i])
                     continue
@@ -222,7 +232,11 @@ class Downloader(object):
         gc.collect()
         return b
 
-    def is_finish(self):
+    def is_continue(self):
+        """
+
+        :return bool: status of downloading
+        """
         if self._received_index == self._request_num:
             return False
         else:

@@ -47,7 +47,7 @@ if __name__ == '__main__':
         dl.start_download()
         local_logger.debug('STARTED')
         get_bytes_len = 0
-        while dl.is_finish():
+        while dl.is_continue():
             b = dl.get_bytes()
             get_bytes_len += len(b)
             with open('test', 'ab') as f:
