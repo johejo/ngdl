@@ -30,16 +30,12 @@ class Downloader(object):
 
         self.logger = logger
 
-        self._original_urls = urls
-        self._urls = []  # type: List[ParseResult]
-        self._sessions = []  # type: List[requests.Session]
-        self._ports = []
+        self._original_urls = urls.copy()
         self._length_list = []
-        self._is_started = False
+        self._sessions = [self._check_url(url) for url in urls]  # type: List[requests.Session]
+        self._ports = []
 
-        for url in urls:
-            self._sessions.append(self._check_url(url))
-            self._urls.append(urlparse(url))
+        self._is_started = False
 
         if map_all(self._length_list) is False:
             raise FileSizeError
@@ -125,6 +121,8 @@ class Downloader(object):
 
         if 301 <= status <= 303 or 307 <= status <= 308:
             location = resp.headers['Location']
+            self._original_urls.remove(url)
+            self._original_urls.append(location)
             self.logger.debug('Host {} is redirected to {}'.format(url, location))
             sess = self._check_url(url=location)
             resp = sess.head(url=location)
@@ -182,6 +180,7 @@ class Downloader(object):
             self._request_queue.appendleft(param)
             self._sessions.remove(sess)
             self._original_urls.remove(url)
+            self._create_new_session()
             return self._request()
 
         content = resp.content
