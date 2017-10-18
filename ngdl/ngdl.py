@@ -1,4 +1,3 @@
-from hyper import HTTP20Connection
 from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from urllib.parse import urlparse, ParseResult
 from typing import List
@@ -6,6 +5,9 @@ from collections import deque
 from random import randrange
 from logging import getLogger, NullHandler
 import gc
+import requests
+from requests.exceptions import ConnectionError
+from hyper.contrib import HTTP20Adapter
 
 from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRange
 from .utils import map_all, get_order
@@ -29,13 +31,14 @@ class Downloader(object):
         self.logger = logger
         self._split_size = split_size
 
+        self._original_urls = urls
         self._urls = []  # type: List[ParseResult]
-        self._conns = []  # type: List[HTTP20Connection]
+        self._sessions = []  # type: List[requests.Session]
         self._ports = []
         self._length_list = []
 
         for url in urls:
-            self._conns.append(self._check_url(url))
+            self._sessions.append(self._check_url(url))
             self._urls.append(urlparse(url))
 
         if map_all(self._length_list) is False:
@@ -59,7 +62,6 @@ class Downloader(object):
 
             param = {'index': i,
                      'method': 'GET',
-                     'url': self._urls[0].path,
                      'headers': {'Range': 'bytes={0}-{1}'.format(begin, end)}
                      }
             self._request_queue.append(param)
@@ -99,63 +101,89 @@ class Downloader(object):
         else:
             raise PortError
 
-        return self._check_status(url, port)  # type: HTTP20Connection
+        return self._check_status(url, port)  # type: requests.Session
 
     def _check_status(self, url, port):
         """
 
         :param url: str
         :param port: int
-        :return: conn
+        :return: sess: request.Session
         """
 
         parsed_url = urlparse(url)  # type: ParseResult
-        conn = HTTP20Connection(host=parsed_url.hostname, port=port)
-        conn.request(method='HEAD', url=parsed_url.path)
-        resp = conn.get_response()
-        status = resp.status
+
+        sess = requests.Session()
+        sess.mount(parsed_url.scheme+'://'+parsed_url.netloc+':'+str(port), HTTP20Adapter())
+        resp = sess.head(url=url)
+        status = resp.status_code
+
         if 301 <= status <= 303 or 307 <= status <= 308:
             location = resp.headers['Location']
             self.logger.debug(msg='Host is redirected to {0}'.format(location))
-            conn = self._check_url(url=location)
+            sess = self._check_url(url=location)
+            resp = sess.head(url=location)
 
         elif status != 200:
             self.logger.debug(msg='Invalid status code: {0}'.format(str(status)))
             raise StatusCodeError
 
         try:
-            length = (resp.headers['Content-Length'][0])
+            length = (resp.headers['Content-Length'])
         except KeyError:
             raise NoContentLength
 
         try:
-            resp.headers[b'Accept-Ranges']
+            resp.headers['Accept-Ranges']
         except KeyError:
             raise NoAcceptRange
 
         self._length_list.append(length)
 
-        return conn  # type: HTTP20Connection
+        return sess  # type: requests.Session
 
     def start_download(self):
         for i in range(self._request_num):
             self._future_resp.append(self._executor.submit(self._request))
-            self.logger.debug('SUBMIT {0}'.format(i))
         self.logger.debug('SUBMITTED')
+
+    def _create_new_session(self):
+        rand = randrange(len(self._sessions))
+        url = self._original_urls[rand]
+        new_sess = self._check_url(url)
+        self._sessions.append(new_sess)
 
     def _request(self):
         param = self._request_queue.popleft()
-        conn = self._conns[randrange(len(self._conns))]  # type: HTTP20Connection
-        stream_id = conn.request(method=param['method'], url=param['url'], headers=param['headers'])
-        self.logger.debug('Send request stream_id: {} index: {} header:  {}'
-                          .format(stream_id, param['index'], param['headers']['Range']))
-        resp = conn.get_response(stream_id)
-        body = resp.read()
-        range_header = resp.headers['Content-Range'][0]
+        rand = randrange(len(self._sessions))
+        sess = self._sessions[rand]  # type: requests.Session
+        url = self._original_urls[rand]
+        self.logger.debug('Send request index: {} header:  {}'
+                          .format(param['index'], param['headers']['Range']))
+
+        try:
+            resp = sess.request(method=param['method'], url=url, headers=param['headers'])
+        except ConnectionError as e:
+            self.logger.debug('{}'.format(e))
+            self._request_queue.appendleft(param)
+            self._sessions.remove(sess)
+            self._create_new_session()
+            return self._request()
+
+        status = resp.status_code
+        if status != 206:
+            self.logger.debug('Failed {} status {}'.format(self._original_urls[rand], status))
+            self._request_queue.appendleft(param)
+            self._sessions.remove(sess)
+            self._original_urls.remove(url)
+            return self._request()
+
+        content = resp.content
+        range_header = resp.headers['Content-Range']
         order = get_order(range_header, self._split_size)
-        self.logger.debug(msg='Received response stream_id: {} order: {} header: {}'
-                          .format(stream_id, order, range_header))
-        return order, body
+        self.logger.debug(msg='Received response order: {} header: {}'
+                          .format(order, range_header))
+        return order, content
 
     def get_bytes(self):
         """
@@ -168,10 +196,11 @@ class Downloader(object):
                 i += 1
             else:
                 try:
-                    order, body = self._future_resp[i].result(timeout=0)
+                    order, content = self._future_resp[i].result(timeout=0)
                     self.logger.debug(msg='Successfully get result {}'.format(order))
-                    self._data[order] = body
+                    self._data[order] = content
                     self._future_resp.remove(self._future_resp[i])
+                    continue
                 except TimeoutError:
                     i += 1
 
@@ -189,7 +218,7 @@ class Downloader(object):
         self._received_index = i
         if count != 0:
             self._counts.append(count)
-        self.logger.debug('Return {} bytes {} blocks'.format(len(b), count))
+            self.logger.debug('Return {} bytes {} blocks'.format(len(b), count))
         gc.collect()
         return b
 
@@ -200,9 +229,10 @@ class Downloader(object):
             return True
 
     def __enter__(self):
+        self.logger.debug('Enter')
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.logger.debug('{}'.format(self._counts))
+        self.logger.debug('Exit {}'.format(self._counts))
         self._executor.shutdown()
         return False

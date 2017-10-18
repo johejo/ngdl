@@ -1,3 +1,7 @@
+import os
+import signal
+
+
 def map_all(es):
     """
     :param es: list
@@ -13,9 +17,12 @@ def get_order(range_header, split_size):
     :param split_size: int
     :return:
     """
-    tmp = range_header.split(b' ')
-    tmp = tmp[1].split(b'/')
-    tmp = tmp[0].split(b'-')
+    tmp = range_header.split(' ')
+    tmp = tmp[1].split('/')
+    tmp = tmp[0].split('-')
     order = int(tmp[0]) // split_size
     return order
 
+
+def kill_all():
+    os.kill(os.getpid(), signal.SIGKILL)
