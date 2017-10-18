@@ -1,20 +1,23 @@
 from hyper import HTTP20Connection
-from concurrent.futures import ThreadPoolExecutor, Future, TimeoutError
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from urllib.parse import urlparse, ParseResult
 from typing import List
 from collections import deque
 from random import randrange
-
 from logging import getLogger, NullHandler
+import gc
 
-from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRangeHeader
+from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRange
 from .utils import map_all, get_order
 
-local_logger = getLogger(__name__).addHandler(NullHandler)
+local_logger = getLogger(__name__)
+local_logger.addHandler(NullHandler())
+
+DEFAULT_SPLIT_SIZE = 1000
 
 
 class Downloader(object):
-    def __init__(self, urls, parallel_num=1, split_size=1, *, logger=None):
+    def __init__(self, urls, split_size=DEFAULT_SPLIT_SIZE, *, parallel_num=None, logger=local_logger):
         """
 
         :param list urls:
@@ -23,8 +26,7 @@ class Downloader(object):
         :param logger:
         """
 
-        self.logger = logger or local_logger
-        self._parallel_num = parallel_num
+        self.logger = logger
         self._split_size = split_size
 
         self._urls = []  # type: List[ParseResult]
@@ -63,14 +65,11 @@ class Downloader(object):
             self._request_queue.append(param)
             begin += split_size
 
-        # self._result_queue = deque()
-
-        self.WORKER_NUM = 5
-        self.GET_TIMEOUT = 1
         self._received_index = 0
-        self._future_resp = []  # type: List[Future]
+        self._future_resp = deque()
         self._data = [None for i in range(self._request_num)]
-        self._executor = ThreadPoolExecutor()
+        self._executor = ThreadPoolExecutor(max_workers=parallel_num)
+        self._counts = deque()
 
         self.logger.debug(msg='Successfully initialized')
 
@@ -111,7 +110,7 @@ class Downloader(object):
         """
 
         parsed_url = urlparse(url)  # type: ParseResult
-        conn = HTTP20Connection(host=parsed_url.hostname, port=port, enable_push=True)
+        conn = HTTP20Connection(host=parsed_url.hostname, port=port)
         conn.request(method='HEAD', url=parsed_url.path)
         resp = conn.get_response()
         status = resp.status
@@ -132,7 +131,7 @@ class Downloader(object):
         try:
             resp.headers[b'Accept-Ranges']
         except KeyError:
-            raise NoAcceptRangeHeader
+            raise NoAcceptRange
 
         self._length_list.append(length)
 
@@ -141,7 +140,6 @@ class Downloader(object):
     def start_download(self):
         for i in range(self._request_num):
             self._future_resp.append(self._executor.submit(self._request))
-            # self._executor.submit(self._request)
             self.logger.debug('SUBMIT {0}'.format(i))
         self.logger.debug('SUBMITTED')
 
@@ -152,31 +150,34 @@ class Downloader(object):
         self.logger.debug('Send request stream_id: {} index: {} header:  {}'
                           .format(stream_id, param['index'], param['headers']['Range']))
         resp = conn.get_response(stream_id)
-
-        range_header = resp.headers['Content-Range'][0]  # type: bytes
+        body = resp.read()
+        range_header = resp.headers['Content-Range'][0]
         order = get_order(range_header, self._split_size)
         self.logger.debug(msg='Received response stream_id: {} order: {} header: {}'
                           .format(stream_id, order, range_header))
-        # self._result_queue.append({'order': order, 'body': resp.read()})
-        return order, resp.read()
+        return order, body
 
     def get_bytes(self):
+        """
 
-        for i, future in enumerate(self._future_resp):
-            if future.running():
-                self.logger.debug('Skipped')
-                continue
+        :return: bytes
+        """
+        i = 0
+        while i < len(self._future_resp):
+            if self._future_resp[i].running():
+                i += 1
             else:
-                order, body = future.result()
-                self.logger.debug(msg='Successfully get result {}'.format(order))
                 try:
+                    order, body = self._future_resp[i].result(timeout=0)
+                    self.logger.debug(msg='Successfully get result {}'.format(order))
                     self._data[order] = body
-                except:
-                    break
-                self._future_resp.pop(i)
+                    self._future_resp.remove(self._future_resp[i])
+                except TimeoutError:
+                    i += 1
 
         b = bytearray()
         i = self._received_index
+        count = 0
         while i < len(self._data):
             if self._data[i] is None:
                 break
@@ -184,8 +185,12 @@ class Downloader(object):
                 b += self._data[i]
                 self._data[i] = None
                 i += 1
+                count += 1
         self._received_index = i
-
+        if count != 0:
+            self._counts.append(count)
+        self.logger.debug('Return {} bytes {} blocks'.format(len(b), count))
+        gc.collect()
         return b
 
     def is_finish(self):
@@ -198,5 +203,6 @@ class Downloader(object):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        self.logger.debug('{}'.format(self._counts))
         self._executor.shutdown()
         return False

@@ -8,16 +8,21 @@ local_logger = getLogger(__name__)
 local_logger.setLevel(DEBUG)
 local_logger.addHandler(handler)
 
-
 if __name__ == '__main__':
 
     # create file
     with open('test', 'wb') as f:
         pass
 
-    with Downloader(urls=['http://165.242.111.92:8080/ubuntu-17.04-server-i386.template',
-                          'http://165.242.111.93:8080/ubuntu-17.04-server-i386.template'
-                          ],
+    urls0 = ['https://165.242.111.92:8081/ubuntu-17.04-server-i386.template',
+             'https://165.242.111.93:8081/ubuntu-17.04-server-i386.template'
+             ]
+
+    urls1 = ['http://165.242.111.92:8080/ubuntu-17.04-server-amd64.iso',
+             'http://165.242.111.93:8080/ubuntu-17.04-server-amd64.iso'
+             ]
+
+    with Downloader(urls=urls0,
                     parallel_num=5,
                     split_size=1000000,
                     logger=local_logger) as dl:

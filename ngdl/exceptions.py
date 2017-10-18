@@ -18,7 +18,7 @@ class FileSizeError(Exception):
     pass
 
 
-class NoAcceptRangeHeader(Exception):
+class NoAcceptRange(Exception):
     pass
 
 
