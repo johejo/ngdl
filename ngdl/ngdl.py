@@ -2,26 +2,28 @@ from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from urllib.parse import urlparse, ParseResult
 from typing import List
 from collections import deque
-from random import randrange
+import random
 from logging import getLogger, NullHandler
 import gc
+import sys
 import requests
 from requests.exceptions import ConnectionError
 from hyper.contrib import HTTP20Adapter
 
 from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRange
-from .utils import map_all, get_order
+from .utils import map_all, get_order, kill_all
 
 local_logger = getLogger(__name__)
 local_logger.addHandler(NullHandler())
 
 DEFAULT_SPLIT_SIZE = 1000
+DEFAULT_BIAS_TO_CONNECTION = 0.01
 
 
 class Downloader(object):
-    def __init__(self, urls, split_size=DEFAULT_SPLIT_SIZE, *, parallel_num=None, logger=local_logger):
+    def __init__(self, urls, split_size=DEFAULT_SPLIT_SIZE, *,
+                 parallel_num=None, logger=local_logger, bias=DEFAULT_BIAS_TO_CONNECTION):
         """
-
         :param list urls: URL list
         :param int parallel_num:
         :param int split_size:
@@ -30,22 +32,22 @@ class Downloader(object):
 
         self.logger = logger
 
-        self._original_urls = urls
-        self._urls = []  # type: List[ParseResult]
-        self._sessions = []  # type: List[requests.Session]
-        self._ports = []
-        self._length_list = []
-        self._is_started = False
+        self._bias = 1 + bias
+        self._urls = urls.copy()
+        default = 1.0 / len(urls)
+        self._priority = [default for url in urls]
 
-        for url in urls:
-            self._sessions.append(self._check_url(url))
-            self._urls.append(urlparse(url))
+        self._length_list = []
+        self._sessions = [self._check_url(url) for url in urls]  # type: List[requests.Session]
+        self._ports = []
+
+        self._is_started = False
 
         if map_all(self._length_list) is False:
             raise FileSizeError
         length = int(self._length_list[0])
 
-        if length > split_size:
+        if length < split_size:
             self._split_size = length // len(urls)
         else:
             self._split_size = split_size
@@ -56,7 +58,7 @@ class Downloader(object):
         if reminder != 0:
             self._request_num += 1
 
-        self._request_queue = deque()
+        self._params = deque()
 
         for i in range(self._request_num):
 
@@ -69,7 +71,7 @@ class Downloader(object):
                      'method': 'GET',
                      'headers': {'Range': 'bytes={0}-{1}'.format(begin, end)}
                      }
-            self._request_queue.append(param)
+            self._params.append(param)
             begin += split_size
 
         self._received_index = 0
@@ -78,11 +80,10 @@ class Downloader(object):
         self._executor = ThreadPoolExecutor(max_workers=parallel_num)
         self._counts = deque()
 
-        self.logger.debug('Successfully initialized')
+        print('Successfully initialized', file=sys.stderr)
 
     def _check_url(self, url):
         """
-
         :param url: str
         :return: sess requests.Session
         """
@@ -110,7 +111,6 @@ class Downloader(object):
 
     def _check_host(self, url, port):
         """
-
         :param url: str
         :param port: int
         :return: sess: request.Session
@@ -125,7 +125,9 @@ class Downloader(object):
 
         if 301 <= status <= 303 or 307 <= status <= 308:
             location = resp.headers['Location']
-            self.logger.debug('Host {} is redirected to {}'.format(url, location))
+            self._urls.remove(url)
+            self._urls.append(location)
+            print('Host {} is redirected to {}'.format(url, location), file=sys.stderr)
             sess = self._check_url(url=location)
             resp = sess.head(url=location)
 
@@ -153,17 +155,52 @@ class Downloader(object):
         self.logger.debug('SUBMITTED')
         self._is_started = True
 
-    def _create_new_session(self):
-        rand = randrange(len(self._sessions))
-        url = self._original_urls[rand]
-        new_sess = self._check_url(url)
-        self._sessions.append(new_sess)
+    def _get_index(self):
+        rand = random.random()
+        v = 0
+        for i, priority in enumerate(self._priority):
+            v += priority
+            if rand <= v:
+                return i
+
+    def _set_priority(self, index, ratio):
+        old = self._priority[index]
+        new = old * ratio
+        if new > 1.0:
+            new = 1.0
+        diff = old - new
+        each = diff / (len(self._priority) - 1)
+
+        c = 0
+        for i in range(len(self._priority)):
+            if i == index:
+                self._priority[i] = new
+            else:
+                self._priority[i] += each
+
+            if self._priority[i] < 0:
+                c += 1
+                self._priority[i] = 0
+
+        under = sum(self._priority) - 1.0
+
+        if under != 0:
+            u_each = under / (len(self._priority) - c - 1)
+            for i in range(len(self._priority)):
+                if self._priority[i] != 0 and i != index:
+                    self._priority[i] -= u_each
+
+        self.logger.debug('Connection Priority: {}'.format(self._priority))
+
+        if sum(self._priority) > 1.00001:
+            self.logger.debug('{}'.format(sum(self._priority)))
+            kill_all()
 
     def _request(self):
-        param = self._request_queue.popleft()
-        rand = randrange(len(self._sessions))
-        sess = self._sessions[rand]  # type: requests.Session
-        url = self._original_urls[rand]
+        param = self._params.popleft()
+        index = self._get_index()
+        sess = self._sessions[index]  # type: requests.Session
+        url = self._urls[index]
         self.logger.debug('Send request index: {} header:  {}'
                           .format(param['index'], param['headers']['Range']))
 
@@ -171,17 +208,15 @@ class Downloader(object):
             resp = sess.request(method=param['method'], url=url, headers=param['headers'])
         except ConnectionError as e:
             self.logger.debug('{}'.format(e))
-            self._request_queue.appendleft(param)
-            self._sessions.remove(sess)
-            self._create_new_session()
+            self._params.appendleft(param)
+            self._set_priority(index, 0)
             return self._request()
 
         status = resp.status_code
         if status != 206:
-            self.logger.debug('Failed {} status {}'.format(self._original_urls[rand], status))
-            self._request_queue.appendleft(param)
-            self._sessions.remove(sess)
-            self._original_urls.remove(url)
+            self.logger.debug('Failed {} status {}'.format(self._urls[index], status))
+            self._params.appendleft(param)
+            self._set_priority(index, 0)
             return self._request()
 
         content = resp.content
@@ -189,11 +224,11 @@ class Downloader(object):
         order = get_order(range_header, self._split_size)
         self.logger.debug(msg='Received response order: {} header: {}'
                           .format(order, range_header))
+        self._set_priority(index, self._bias)
         return order, content
 
     def get_bytes(self):
         """
-
         :return: bytes
         """
 
@@ -207,7 +242,6 @@ class Downloader(object):
             else:
                 try:
                     order, content = self._future_resp[i].result(timeout=0)
-                    self.logger.debug('Successfully get result {}'.format(order))
                     self._data[order] = content
                     self._future_resp.remove(self._future_resp[i])
                     continue
@@ -234,7 +268,6 @@ class Downloader(object):
 
     def is_continue(self):
         """
-
         :return bool: status of downloading
         """
         if self._received_index == self._request_num:
@@ -243,10 +276,10 @@ class Downloader(object):
             return True
 
     def __enter__(self):
-        self.logger.debug('Enter')
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.logger.debug('Exit {}'.format(self._counts))
         self._executor.shutdown()
+        print(self._urls)
         return False
