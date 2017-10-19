@@ -14,8 +14,8 @@ if __name__ == '__main__':
     with open('test', 'wb') as f:
         pass
 
-    urls0 = ['https://165.242.111.92:8081/ubuntu-17.04-server-i386.template',
-             'https://165.242.111.93:8081/ubuntu-17.04-server-i386.template'
+    urls0 = ['http://165.242.111.92:8080/ubuntu-17.04-server-i386.template',
+             'http://165.242.111.93:8080/ubuntu-17.04-server-i386.template'
              ]
 
     urls1 = ['http://165.242.111.92:8080/ubuntu-17.04-server-amd64.iso',
@@ -39,12 +39,11 @@ if __name__ == '__main__':
     ]
 
     begin = time.monotonic()
-    with Downloader(urls=urls3,
+    with Downloader(urls=urls0,
                     # parallel_num=5,
                     split_size=1000000,
                     logger=local_logger
                     ) as dl:
-        dl.start_download()
         local_logger.debug('STARTED')
         get_bytes_len = 0
         while dl.is_continue():

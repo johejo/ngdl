@@ -41,7 +41,7 @@ class Downloader(object):
             raise FileSizeError
         length = int(self._length_list[0])
 
-        if length > split_size:
+        if length < split_size:
             self._split_size = length // len(urls)
         else:
             self._split_size = split_size
