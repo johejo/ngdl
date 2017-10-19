@@ -39,7 +39,7 @@ if __name__ == '__main__':
     ]
 
     begin = time.monotonic()
-    with Downloader(urls=urls0,
+    with Downloader(urls=urls2,
                     # parallel_num=5,
                     split_size=1000000,
                     logger=local_logger

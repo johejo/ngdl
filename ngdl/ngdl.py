@@ -5,12 +5,13 @@ from collections import deque
 from random import randrange
 from logging import getLogger, NullHandler
 import gc
+import sys
 import requests
 from requests.exceptions import ConnectionError
 from hyper.contrib import HTTP20Adapter
 
 from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRange
-from .utils import map_all, get_order
+from .utils import map_all, get_order, kill_all
 
 local_logger = getLogger(__name__)
 local_logger.addHandler(NullHandler())
@@ -21,7 +22,6 @@ DEFAULT_SPLIT_SIZE = 1000
 class Downloader(object):
     def __init__(self, urls, split_size=DEFAULT_SPLIT_SIZE, *, parallel_num=None, logger=local_logger):
         """
-
         :param list urls: URL list
         :param int parallel_num:
         :param int split_size:
@@ -52,7 +52,7 @@ class Downloader(object):
         if reminder != 0:
             self._request_num += 1
 
-        self._request_queue = deque()
+        self._params = deque()
 
         for i in range(self._request_num):
 
@@ -65,7 +65,7 @@ class Downloader(object):
                      'method': 'GET',
                      'headers': {'Range': 'bytes={0}-{1}'.format(begin, end)}
                      }
-            self._request_queue.append(param)
+            self._params.append(param)
             begin += split_size
 
         self._received_index = 0
@@ -74,11 +74,10 @@ class Downloader(object):
         self._executor = ThreadPoolExecutor(max_workers=parallel_num)
         self._counts = deque()
 
-        self.logger.debug('Successfully initialized')
+        print('Successfully initialized', file=sys.stderr)
 
     def _check_url(self, url):
         """
-
         :param url: str
         :return: sess requests.Session
         """
@@ -106,7 +105,6 @@ class Downloader(object):
 
     def _check_host(self, url, port):
         """
-
         :param url: str
         :param port: int
         :return: sess: request.Session
@@ -123,7 +121,7 @@ class Downloader(object):
             location = resp.headers['Location']
             self._original_urls.remove(url)
             self._original_urls.append(location)
-            self.logger.debug('Host {} is redirected to {}'.format(url, location))
+            print('Host {} is redirected to {}'.format(url, location), file=sys.stderr)
             sess = self._check_url(url=location)
             resp = sess.head(url=location)
 
@@ -158,7 +156,7 @@ class Downloader(object):
         self._sessions.append(new_sess)
 
     def _request(self):
-        param = self._request_queue.popleft()
+        param = self._params.popleft()
         rand = randrange(len(self._sessions))
         sess = self._sessions[rand]  # type: requests.Session
         url = self._original_urls[rand]
@@ -169,18 +167,15 @@ class Downloader(object):
             resp = sess.request(method=param['method'], url=url, headers=param['headers'])
         except ConnectionError as e:
             self.logger.debug('{}'.format(e))
-            self._request_queue.appendleft(param)
-            self._sessions.remove(sess)
-            self._create_new_session()
+            # kill_all()
+            self._params.append(param)
             return self._request()
 
         status = resp.status_code
         if status != 206:
             self.logger.debug('Failed {} status {}'.format(self._original_urls[rand], status))
-            self._request_queue.appendleft(param)
-            self._sessions.remove(sess)
-            self._original_urls.remove(url)
-            self._create_new_session()
+            # kill_all()
+            self._params.append(param)
             return self._request()
 
         content = resp.content
@@ -192,7 +187,6 @@ class Downloader(object):
 
     def get_bytes(self):
         """
-
         :return: bytes
         """
 
@@ -233,7 +227,6 @@ class Downloader(object):
 
     def is_continue(self):
         """
-
         :return bool: status of downloading
         """
         if self._received_index == self._request_num:
@@ -242,7 +235,6 @@ class Downloader(object):
             return True
 
     def __enter__(self):
-        self.logger.debug('Enter')
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
