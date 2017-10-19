@@ -25,21 +25,24 @@ if __name__ == '__main__':
     urls2 = [
         'http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.04/ubuntu-17.04-server-amd64.iso',  # KDDI
         'http://ubuntutym2.u-toyama.ac.jp/ubuntu/17.04/ubuntu-17.04-server-amd64.iso',  # toyama
-        'http://ftp.riken.go.jp/Linux/ubuntu-releases/17.04/ubuntu-17.04-server-amd64.iso',  # riken
+        # 'http://ftp.riken.go.jp/Linux/ubuntu-releases/17.04/ubuntu-17.04-server-amd64.iso',  # riken
         'http://ftp.jaist.ac.jp/pub/Linux/ubuntu-releases/17.04/ubuntu-17.04-server-amd64.iso',  # jaist
-        'http://ftp.yz.yamagata-u.ac.jp/pub/linux/ubuntu/releases/17.04/ubuntu-17.04-server-amd64.iso',  # yamagata
+        # 'http://ftp.yz.yamagata-u.ac.jp/pub/linux/ubuntu/releases/17.04/ubuntu-17.04-server-amd64.iso',  # yamagata
     ]
 
     urls3 = [
-        'http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.04/ubuntu-17.04-server-i386.template',  # KDDI
+        # 'http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.04/ubuntu-17.04-server-i386.template',  # KDDI
         'http://ubuntutym2.u-toyama.ac.jp/ubuntu/17.04/ubuntu-17.04-server-i386.template',  # toyama
         'http://ftp.riken.go.jp/Linux/ubuntu-releases/17.04/ubuntu-17.04-server-i386.template',  # riken
         'http://ftp.jaist.ac.jp/pub/Linux/ubuntu-releases/17.04/ubuntu-17.04-server-i386.template',  # jaist
-        'http://ftp.yz.yamagata-u.ac.jp/pub/linux/ubuntu/releases/17.04/ubuntu-17.04-server-i386.template'  # yamagata
+        # 'http://ftp.yz.yamagata-u.ac.jp/pub/linux/ubuntu/releases/17.04/ubuntu-17.04-server-i386.template'  # yamagata
     ]
 
+    urls4 = urls0 + urls3
+    urls5 = urls1 + urls2
+
     begin = time.monotonic()
-    with Downloader(urls=urls2,
+    with Downloader(urls=urls5,
                     # parallel_num=5,
                     split_size=1000000,
                     logger=local_logger
