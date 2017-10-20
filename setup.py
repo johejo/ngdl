@@ -8,12 +8,12 @@ except IOError:
 
 setup(
     name='ngdl',
-    version='0.1.2',
+    version='0.1.3',
     author='Mitsuo Heijo',
     author_email='mitsuo_h@outlook.com',
     description='HTTP/2 parallel downloading client for Python',
     long_description=readme,
-    find_packages=find_packages(),
+    packages=find_packages(),
     license='MIT',
     url='http://github.com/johejo/ngdl',
     py_modules=['ngdl'],
