@@ -27,7 +27,7 @@ class Downloader(object):
                  parallel_num=DEFAULT_PARALLEL_NUM,
                  logger=local_logger,
                  bias=DEFAULT_BIAS_TO_CONNECTION,
-                 coefficient = DEFAULT_PRIORITY_COEFFICIENT
+                 coefficient=DEFAULT_PRIORITY_COEFFICIENT
                  ):
         """
         :param list urls: URL list
