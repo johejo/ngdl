@@ -1,2 +1,2 @@
-from ngdl.ngdl import Downloader
-from ngdl.exceptions import *
+from .ngdl import Downloader
+from .exceptions import *

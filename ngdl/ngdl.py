@@ -224,7 +224,7 @@ class Downloader(object):
         order = get_order(range_header, self._split_size)
         self.logger.debug(msg='Received response order: {} header: {}'
                           .format(order, range_header))
-        self._set_priority(index, self._bias)
+        # self._set_priority(index, self._bias)
         return order, content
 
     def get_bytes(self):
