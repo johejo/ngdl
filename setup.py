@@ -8,7 +8,7 @@ except IOError:
 
 setup(
     name='ngdl',
-    version='0.1.0',
+    version='0.1.2',
     author='Mitsuo Heijo',
     author_email='mitsuo_h@outlook.com',
     description='HTTP/2 parallel downloading client for Python',
