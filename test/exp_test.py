@@ -1,6 +1,8 @@
 from ngdl import Downloader
 import time
 from logging import getLogger, StreamHandler, DEBUG
+from datetime import datetime
+import pickle
 
 handler = StreamHandler()
 handler.setLevel(DEBUG)
@@ -41,19 +43,27 @@ if __name__ == '__main__':
     urls4 = urls0 + urls3
     urls5 = urls1 + urls2
 
-    begin = time.monotonic()
-    with Downloader(urls=urls5,
-                    # parallel_num=5,
-                    split_size=1000000,
-                    logger=local_logger
-                    ) as dl:
-        local_logger.debug('STARTED')
-        get_bytes_len = 0
-        while dl.is_continue():
-            b = dl.get_bytes()
-            get_bytes_len += len(b)
-            with open('test', 'ab') as f:
-                f.write(b)
-        local_logger.debug('TOTAL: {} bytes'.format(get_bytes_len))
+    bias_list = [0, 2, 5, 10, 20, 30, 50]
 
-    local_logger.debug('TIME: {}'.format(time.monotonic() - begin))
+    for bias in bias_list:
+        begin = time.monotonic()
+        with Downloader(urls=urls5,
+                        # parallel_num=5,
+                        split_size=1000000,
+                        logger=local_logger,
+                        bias=bias,
+                        ) as dl:
+            local_logger.debug('STARTED')
+            get_bytes_len = 0
+            while dl.is_continue():
+                b = dl.get_bytes()
+                get_bytes_len += len(b)
+                with open('test', 'ab') as f:
+                    f.write(b)
+            local_logger.debug('TOTAL: {} bytes'.format(get_bytes_len))
+            local_logger.debug('TIME: {}'.format(time.monotonic() - begin))
+            result = dl.get_result()
+
+        filename = datetime.now().isoformat()+'b{}.pcl'.format(bias)
+        with open(filename, 'wb') as f:
+            pickle.dump(result, f)
