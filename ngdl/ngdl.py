@@ -19,6 +19,7 @@ local_logger.addHandler(NullHandler())
 
 DEFAULT_SPLIT_SIZE = 1000
 DEFAULT_BIAS = 0
+DEFAULT_POW = 0
 DEFAULT_PARALLEL_NUM = 5
 
 
@@ -27,6 +28,7 @@ class Downloader(object):
                  parallel_num=DEFAULT_PARALLEL_NUM,
                  logger=local_logger,
                  bias=DEFAULT_BIAS,
+                 power=DEFAULT_POW,
                  ):
         """
         :param list urls: URL list
@@ -38,6 +40,7 @@ class Downloader(object):
         self.logger = logger
 
         self._bias = bias
+        self._power = power
         self._urls = urls.copy()
         default = 1.0 / len(urls)
         self._priority = [default for url in urls]
@@ -70,7 +73,6 @@ class Downloader(object):
         if reminder != 0:
             self._request_num += 1
 
-        # self._params = deque()
         self._params = []
 
         for i in range(self._request_num):
@@ -212,19 +214,24 @@ class Downloader(object):
             self.logger.debug('{}'.format(sum(self._priority)))
             kill_all()
 
-    def _request(self):
-        index = self._index.pop()
-
+    def _get_param_index(self, index):
         c = self._url_received_counts[index]
         m = max(self._url_received_counts)
 
+        if self._power == 0:
+            return 0
+
         try:
-            x = int((1.0 - c / m) * self._bias)
+            x = int(self._bias * (1.0 - c / m) ** self._power)
         except ZeroDivisionError:
             x = 0
-        print(x, index, c, m)
+        return x
 
-        # param = self._params.popleft()
+    def _request(self):
+        index = self._index.pop()
+
+        x = self._get_param_index(index)
+
         try:
             param = self._params.pop(x)
         except IndexError:
@@ -240,7 +247,6 @@ class Downloader(object):
         except ConnectionError as e:
             self.logger.debug('{}'.format(e))
 
-            # self._params.appendleft(param)
             self._params.insert(0, param)
 
             self._set_priority(index, 0)
@@ -251,7 +257,6 @@ class Downloader(object):
         if status != 206:
             self.logger.debug('Failed {} status {}'.format(self._urls[index], status))
 
-            # self._params.appendleft(param)
             self._params.insert(0, param)
 
             self._set_priority(index, 0)
@@ -295,7 +300,6 @@ class Downloader(object):
                 try:
                     order, content = self._future_resp[i].result(timeout=0)
                     self._data[order] = content
-                    # self._future_resp.remove(self._future_resp[i])
                     del self._future_resp[i]
                     continue
                 except TimeoutError:
@@ -309,7 +313,7 @@ class Downloader(object):
                 break
             else:
                 b += self._data[i]
-                self._data[i] = None
+                self._data[i] = b''
                 i += 1
                 count += 1
         self._received_index = i
