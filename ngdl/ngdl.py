@@ -7,6 +7,7 @@ from logging import getLogger, NullHandler
 import gc
 import sys
 import requests
+import time
 from requests.exceptions import ConnectionError
 from hyper.contrib import HTTP20Adapter
 
@@ -17,12 +18,18 @@ local_logger = getLogger(__name__)
 local_logger.addHandler(NullHandler())
 
 DEFAULT_SPLIT_SIZE = 1000
-DEFAULT_BIAS_TO_CONNECTION = 0.01
+DEFAULT_BIAS = 0
+DEFAULT_POW = 0
+DEFAULT_PARALLEL_NUM = 5
 
 
 class Downloader(object):
     def __init__(self, urls, split_size=DEFAULT_SPLIT_SIZE, *,
-                 parallel_num=None, logger=local_logger, bias=DEFAULT_BIAS_TO_CONNECTION):
+                 parallel_num=DEFAULT_PARALLEL_NUM,
+                 logger=local_logger,
+                 bias=DEFAULT_BIAS,
+                 power=DEFAULT_POW,
+                 ):
         """
         :param list urls: URL list
         :param int parallel_num:
@@ -32,7 +39,8 @@ class Downloader(object):
 
         self.logger = logger
 
-        self._bias = 1 + bias
+        self._bias = bias
+        self._power = power
         self._urls = urls.copy()
         default = 1.0 / len(urls)
         self._priority = [default for url in urls]
@@ -40,6 +48,13 @@ class Downloader(object):
         self._length_list = []
         self._sessions = [self._check_url(url) for url in urls]  # type: List[requests.Session]
         self._ports = []
+        self._index = deque()
+
+        for i in range(len(self._urls)):
+            for j in range(parallel_num):
+                self._index.append(i)
+        random.shuffle(self._index)
+        self._url_received_counts = [0 for i in range(len(self._urls))]
 
         self._is_started = False
 
@@ -58,7 +73,7 @@ class Downloader(object):
         if reminder != 0:
             self._request_num += 1
 
-        self._params = deque()
+        self._params = []
 
         for i in range(self._request_num):
 
@@ -77,10 +92,13 @@ class Downloader(object):
         self._received_index = 0
         self._future_resp = deque()
         self._data = [None for i in range(self._request_num)]
-        self._executor = ThreadPoolExecutor(max_workers=parallel_num)
-        self._counts = deque()
+        self._executor = ThreadPoolExecutor(max_workers=parallel_num * len(self._urls))
+        self._return_block_num = deque()
 
-        print('Successfully initialized', file=sys.stderr)
+        self._plot = []
+        self._time = []
+        self._exp_data = []
+        self._begin_time = time.monotonic()
 
     def _check_url(self, url):
         """
@@ -155,7 +173,7 @@ class Downloader(object):
         self.logger.debug('SUBMITTED')
         self._is_started = True
 
-    def _get_index(self):
+    def _get_index_rand(self):
         rand = random.random()
         v = 0
         for i, priority in enumerate(self._priority):
@@ -196,9 +214,29 @@ class Downloader(object):
             self.logger.debug('{}'.format(sum(self._priority)))
             kill_all()
 
+    def _get_param_index(self, index):
+        c = self._url_received_counts[index]
+        m = max(self._url_received_counts)
+
+        if self._power == 0:
+            return 0
+
+        try:
+            x = int(self._bias * (1.0 - c / m) ** self._power)
+        except ZeroDivisionError:
+            x = 0
+        return x
+
     def _request(self):
-        param = self._params.popleft()
-        index = self._get_index()
+        index = self._index.pop()
+
+        x = self._get_param_index(index)
+
+        try:
+            param = self._params.pop(x)
+        except IndexError:
+            param = self._params.pop(0)
+
         sess = self._sessions[index]  # type: requests.Session
         url = self._urls[index]
         self.logger.debug('Send request index: {} header:  {}'
@@ -208,15 +246,21 @@ class Downloader(object):
             resp = sess.request(method=param['method'], url=url, headers=param['headers'])
         except ConnectionError as e:
             self.logger.debug('{}'.format(e))
-            self._params.appendleft(param)
+
+            self._params.insert(0, param)
+
             self._set_priority(index, 0)
+            self._index.append(self._get_index_rand())
             return self._request()
 
         status = resp.status_code
         if status != 206:
             self.logger.debug('Failed {} status {}'.format(self._urls[index], status))
-            self._params.appendleft(param)
+
+            self._params.insert(0, param)
+
             self._set_priority(index, 0)
+            self._index.append(self._get_index_rand())
             return self._request()
 
         content = resp.content
@@ -224,8 +268,21 @@ class Downloader(object):
         order = get_order(range_header, self._split_size)
         self.logger.debug(msg='Received response order: {} header: {}'
                           .format(order, range_header))
-        # self._set_priority(index, self._bias)
+
+        self._index.append(index)
+        random.shuffle(self._index)
+        self._url_received_counts[index] += 1
+
+        self._exp_data.append({'time': time.monotonic() - self._begin_time, 'order': order})
+
         return order, content
+
+    def get_result(self):
+        if self.is_continue() is False:
+            return {'exp_data': self._exp_data,
+                    'server_result': dict(zip(self._urls, self._url_received_counts)),
+                    'return_block_num': self._return_block_num
+                    }
 
     def get_bytes(self):
         """
@@ -243,7 +300,7 @@ class Downloader(object):
                 try:
                     order, content = self._future_resp[i].result(timeout=0)
                     self._data[order] = content
-                    self._future_resp.remove(self._future_resp[i])
+                    del self._future_resp[i]
                     continue
                 except TimeoutError:
                     i += 1
@@ -256,12 +313,12 @@ class Downloader(object):
                 break
             else:
                 b += self._data[i]
-                self._data[i] = None
+                self._data[i] = b''
                 i += 1
                 count += 1
         self._received_index = i
         if count != 0:
-            self._counts.append(count)
+            self._return_block_num.append(count)
             self.logger.debug('Return {} bytes {} blocks'.format(len(b), count))
         gc.collect()
         return b
@@ -279,7 +336,5 @@ class Downloader(object):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.logger.debug('Exit {}'.format(self._counts))
         self._executor.shutdown()
-        print(self._urls)
         return False
