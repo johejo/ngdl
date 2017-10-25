@@ -85,10 +85,10 @@ if __name__ == '__main__':
 
             statistic_data[param]['avg'].append(st.mean(result['return_block_num']))
             statistic_data[param]['stdev'].append(st.stdev(result['return_block_num']))
-            filename = datetime.now().isoformat() + 'b{}p{}.pcl'.format(bias, power)
-            if i == 0:
-                with open(filename, 'wb') as f:
-                    pickle.dump(result, f)
+            filename = datetime.now().isoformat() + 't{}b{}p{}.pcl'.format(i, bias, power)
+            # if i == 0:
+            with open(filename, 'wb') as f:
+                pickle.dump(result, f)
 
     with open('statistic.pcl', 'wb') as f:
         for param in params:
