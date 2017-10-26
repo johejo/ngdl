@@ -43,7 +43,7 @@ class Downloader(object):
         self._power = power
         self._urls = urls.copy()
         default = 1.0 / len(urls)
-        self._priority = [default for url in urls]
+        self._priority = [default for _ in urls]
 
         self._length_list = []
         self._sessions = [self._check_url(url) for url in urls]  # type: List[requests.Session]
@@ -54,7 +54,7 @@ class Downloader(object):
             for j in range(parallel_num):
                 self._index.append(i)
         random.shuffle(self._index)
-        self._url_received_counts = [0 for i in range(len(self._urls))]
+        self._url_received_counts = [0 for _ in range(len(self._urls))]
 
         self._is_started = False
 
@@ -91,7 +91,7 @@ class Downloader(object):
 
         self._received_index = 0
         self._future_resp = deque()
-        self._data = [None for i in range(self._request_num)]
+        self._data = [None for _ in range(self._request_num)]
         self._executor = ThreadPoolExecutor(max_workers=parallel_num * len(self._urls))
         self._return_block_num = []
         self._accumulation = []
