@@ -40,7 +40,7 @@ if __name__ == '__main__':
     urls4 = urls0 + urls3
     urls5 = urls1 + urls2
 
-    bias_list = [10, 20, 30, 40, 50, 100]
+    bias_list = [10, 20, 30, 40, 50, 100, 200]
     power_list = [1, 2, 3, 4, 5]
     # bias_list = [10, 20]
     # power_list = [1, 2]
@@ -52,7 +52,7 @@ if __name__ == '__main__':
             params.append((bias, power))
 
     split_size = 1000000
-    times = 10
+    times = 15
 
     statistic_data = {}
     statistic_result = {}
@@ -85,6 +85,8 @@ if __name__ == '__main__':
 
             statistic_data[param]['avg'].append(st.mean(result['return_block_num']))
             statistic_data[param]['stdev'].append(st.stdev(result['return_block_num']))
+            statistic_data[param]['_avg'].append(st.mean(result['accumulation']))
+            statistic_data[param]['_stdev'].append(st.stdev(result['accumulation']))
             filename = datetime.now().isoformat() + 't{}b{}p{}.pcl'.format(i, bias, power)
             # if i == 0:
             with open(filename, 'wb') as f:
@@ -93,6 +95,8 @@ if __name__ == '__main__':
     with open('statistic.pcl', 'wb') as f:
         for param in params:
             statistic_result[param] = {'avg': st.mean(statistic_data[param]['avg']),
-                                       'stdev': st.mean(statistic_data[param]['stdev'])
+                                       'stdev': st.mean(statistic_data[param]['stdev']),
+                                       '_avg': st.mean(statistic_data['_avg']),
+                                       '_stdev': st.mean(statistic_data['_stdev'])
                                        }
         pickle.dump(statistic_result, f)

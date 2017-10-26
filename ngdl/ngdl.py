@@ -93,7 +93,8 @@ class Downloader(object):
         self._future_resp = deque()
         self._data = [None for i in range(self._request_num)]
         self._executor = ThreadPoolExecutor(max_workers=parallel_num * len(self._urls))
-        self._return_block_num = deque()
+        self._return_block_num = []
+        self._accumulation = []
 
         self._plot = []
         self._time = []
@@ -281,7 +282,8 @@ class Downloader(object):
         if self.is_continue() is False:
             return {'exp_data': self._exp_data,
                     'server_result': dict(zip(self._urls, self._url_received_counts)),
-                    'return_block_num': self._return_block_num
+                    'return_block_num': self._return_block_num,
+                    'accumulation': self._accumulation
                     }
 
     def get_bytes(self):
@@ -313,13 +315,20 @@ class Downloader(object):
                 break
             else:
                 b += self._data[i]
-                self._data[i] = b''
+                self._data[i] = None
                 i += 1
                 count += 1
         self._received_index = i
         if count != 0:
             self._return_block_num.append(count)
             self.logger.debug('Return {} bytes {} blocks'.format(len(b), count))
+
+            accumulation = 0
+            for data in self._data:
+                if data is not None:
+                    accumulation += 1
+
+            self._accumulation.append(accumulation)
         gc.collect()
         return b
 

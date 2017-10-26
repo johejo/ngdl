@@ -56,3 +56,6 @@ if __name__ == '__main__':
         local_logger.debug('TOTAL: {} bytes'.format(get_bytes_len))
         local_logger.debug('TIME: {}'.format(time.monotonic() - begin))
         result = dl.get_result()
+
+    print(result['return_block_num'])
+    print(result['accumulation'])
