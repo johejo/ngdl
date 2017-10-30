@@ -22,7 +22,7 @@ if __name__ == '__main__':
              ]
 
     urls2 = [
-        # 'http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.10/ubuntu-17.10-server-amd64.iso',  # KDDI
+        'http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.10/ubuntu-17.10-server-amd64.iso',  # KDDI
         'http://ubuntutym2.u-toyama.ac.jp/ubuntu/17.10/ubuntu-17.10-server-amd64.iso',  # toyama
         'http://ftp.riken.go.jp/Linux/ubuntu-releases/17.10/ubuntu-17.10-server-amd64.iso',  # riken
         'http://ftp.jaist.ac.jp/pub/Linux/ubuntu-releases/17.10/ubuntu-17.10-server-amd64.iso',  # jaist
@@ -67,22 +67,22 @@ if __name__ == '__main__':
                     pass
                 begin = time.monotonic()
 
-                with Downloader(urls=urls5,
-                                split_size=split_size,
-                                logger=local_logger,
-                                bias=bias,
-                                power=power
-                                ) as dl:
-                    local_logger.debug('STARTED')
-                    get_bytes_len = 0
-                    while dl.is_continue():
-                        b = dl.get_bytes()
-                        get_bytes_len += len(b)
-                        with open('test', 'ab') as f:
+                with open('test', 'ab') as f:
+                    with Downloader(urls=urls5,
+                                    split_size=split_size,
+                                    logger=local_logger,
+                                    bias=bias,
+                                    power=power
+                                    ) as dl:
+                        local_logger.debug('STARTED')
+                        get_bytes_len = 0
+                        while dl.is_continue():
+                            b = dl.get_bytes()
+                            get_bytes_len += len(b)
                             f.write(b)
-                    local_logger.debug('TOTAL: {} bytes'.format(get_bytes_len))
-                    local_logger.debug('TIME: {}'.format(time.monotonic() - begin))
-                    result = dl.get_result()
+                        local_logger.debug('TOTAL: {} bytes'.format(get_bytes_len))
+                        local_logger.debug('TIME: {}'.format(time.monotonic() - begin))
+                        result = dl.get_result()
 
                 statistic_data[param]['avg'].append(st.mean(result['return_block_num']))
                 statistic_data[param]['stdev'].append(st.stdev(result['return_block_num']))

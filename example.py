@@ -14,8 +14,8 @@ if __name__ == '__main__':
     with open(filename, 'wb') as f:
         pass
 
-    with Downloader(urls=urls, split_size=1000000) as dl:
-        while dl.is_continue():
-            b = dl.get_bytes()
-            with open(filename, 'ab') as f:
+    with open(filename, 'ab') as f:
+        with Downloader(urls=urls, split_size=1000000) as dl:
+            while dl.is_continue():
+                b = dl.get_bytes()
                 f.write(b)
