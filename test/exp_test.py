@@ -22,7 +22,7 @@ if __name__ == '__main__':
              ]
 
     urls2 = [
-        'http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.10/ubuntu-17.10-server-amd64.iso',  # KDDI
+        # 'http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.10/ubuntu-17.10-server-amd64.iso',  # KDDI
         'http://ubuntutym2.u-toyama.ac.jp/ubuntu/17.10/ubuntu-17.10-server-amd64.iso',  # toyama
         'http://ftp.riken.go.jp/Linux/ubuntu-releases/17.10/ubuntu-17.10-server-amd64.iso',  # riken
         'http://ftp.jaist.ac.jp/pub/Linux/ubuntu-releases/17.10/ubuntu-17.10-server-amd64.iso',  # jaist
@@ -40,7 +40,7 @@ if __name__ == '__main__':
     urls4 = urls0 + urls3
     urls5 = urls1 + urls2
 
-    bias_list = [10, 20, 30, 40, 50, 100, 200]
+    bias_list = [10, 30, 50, 100, 200, 300]
     power_list = [1, 2, 3, 4, 5]
     # bias_list = [10, 20]
     # power_list = [1, 2]
@@ -52,51 +52,55 @@ if __name__ == '__main__':
             params.append((bias, power))
 
     split_size = 1000000
-    times = 15
+    times = 10
 
     statistic_data = {}
     statistic_result = {}
     for param in params:
-        statistic_data[param] = {'avg': [], 'stdev': []}
+        statistic_data[param] = {'avg': [], 'stdev': [], '_avg': [], '_stdev': []}
 
-    for i in range(times):
-        for param in params:
-            bias, power = param
-            with open('test', 'wb') as f:
-                pass
-            begin = time.monotonic()
+    try:
+        for i in range(times):
+            for param in params:
+                bias, power = param
+                with open('test', 'wb') as f:
+                    pass
+                begin = time.monotonic()
 
-            with Downloader(urls=urls5,
-                            split_size=split_size,
-                            logger=local_logger,
-                            bias=bias,
-                            power=power
-                            ) as dl:
-                local_logger.debug('STARTED')
-                get_bytes_len = 0
-                while dl.is_continue():
-                    b = dl.get_bytes()
-                    get_bytes_len += len(b)
-                    with open('test', 'ab') as f:
-                        f.write(b)
-                local_logger.debug('TOTAL: {} bytes'.format(get_bytes_len))
-                local_logger.debug('TIME: {}'.format(time.monotonic() - begin))
-                result = dl.get_result()
+                with Downloader(urls=urls5,
+                                split_size=split_size,
+                                logger=local_logger,
+                                bias=bias,
+                                power=power
+                                ) as dl:
+                    local_logger.debug('STARTED')
+                    get_bytes_len = 0
+                    while dl.is_continue():
+                        b = dl.get_bytes()
+                        get_bytes_len += len(b)
+                        with open('test', 'ab') as f:
+                            f.write(b)
+                    local_logger.debug('TOTAL: {} bytes'.format(get_bytes_len))
+                    local_logger.debug('TIME: {}'.format(time.monotonic() - begin))
+                    result = dl.get_result()
 
-            statistic_data[param]['avg'].append(st.mean(result['return_block_num']))
-            statistic_data[param]['stdev'].append(st.stdev(result['return_block_num']))
-            statistic_data[param]['_avg'].append(st.mean(result['accumulation']))
-            statistic_data[param]['_stdev'].append(st.stdev(result['accumulation']))
-            filename = datetime.now().isoformat() + 't{}b{}p{}.pcl'.format(i, bias, power)
-            # if i == 0:
-            with open(filename, 'wb') as f:
-                pickle.dump(result, f)
+                statistic_data[param]['avg'].append(st.mean(result['return_block_num']))
+                statistic_data[param]['stdev'].append(st.stdev(result['return_block_num']))
+                statistic_data[param]['_avg'].append(st.mean(result['accumulation']))
+                statistic_data[param]['_stdev'].append(st.stdev(result['accumulation']))
+                filename = datetime.now().isoformat() + 't{}b{}p{}.pcl'.format(i, bias, power)
+                # if i == 0:
+                with open(filename, 'wb') as f:
+                    pickle.dump(result, f)
+    except Exception as e:
+        local_logger.debug('{}'.format(e))
 
-    with open('statistic.pcl', 'wb') as f:
-        for param in params:
-            statistic_result[param] = {'avg': st.mean(statistic_data[param]['avg']),
-                                       'stdev': st.mean(statistic_data[param]['stdev']),
-                                       '_avg': st.mean(statistic_data['_avg']),
-                                       '_stdev': st.mean(statistic_data['_stdev'])
-                                       }
-        pickle.dump(statistic_result, f)
+    finally:
+        with open('statistic.pcl', 'wb') as f:
+            for param in params:
+                statistic_result[param] = {'avg': st.mean(statistic_data[param]['avg']),
+                                           'stdev': st.mean(statistic_data[param]['stdev']),
+                                           '_avg': st.mean(statistic_data[param]['_avg']),
+                                           '_stdev': st.mean(statistic_data[param]['_stdev'])
+                                           }
+            pickle.dump(statistic_result, f)

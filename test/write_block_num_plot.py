@@ -27,4 +27,4 @@ if __name__ == '__main__':
     plt.xlabel('bias, power')
     plt.title('AVG and STDEV of the number of simultaneous write blocks')
 
-    plt.savefig('write_block_num_1025.pdf')
+    plt.savefig('write_block_num_1029-w.pdf')

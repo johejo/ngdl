@@ -10,9 +10,8 @@ if __name__ == '__main__':
         t = int(filename[filename.find('t') + 1:filename.find('b')])
         bias = int(filename[filename.find('b') + 1:filename.find('p')])
         power = int(filename[filename.find('p') + 1:filename.rfind('.')])
-        if t == 5:
-            # if (bias == 100 and power == 5) or (bias == 100 and power == 2) or (bias == 100 and power == 1):
-            if bias == 30:
+        if t == 0:
+            if bias == 100 and power == 5 or bias == 0:
                 with open(filename, 'rb') as f:
                     result = pickle.load(f)
 
@@ -29,4 +28,4 @@ if __name__ == '__main__':
     plt.title('Relationship between block arrival time and parameters')
     plt.xlabel('time[s]')
     plt.ylabel('block number')
-    plt.savefig('arrival_time_1025b30.pdf')
+    plt.savefig('arrival_time.pdf')

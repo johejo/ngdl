@@ -11,12 +11,12 @@ local_logger.addHandler(handler)
 
 if __name__ == '__main__':
 
-    urls0 = ['http://165.242.111.92:8080/ubuntu-17.10-server-i386.template',
-             'http://165.242.111.93:8080/ubuntu-17.10-server-i386.template'
+    urls0 = ['http://165.242.111.92/ubuntu-17.10-server-i386.template',
+             'http://165.242.111.93/ubuntu-17.10-server-i386.template'
              ]
 
-    urls1 = ['http://165.242.111.92:8080/ubuntu-17.10-server-amd64.iso',
-             'http://165.242.111.93:8080/ubuntu-17.10-server-amd64.iso'
+    urls1 = ['http://165.242.111.92/ubuntu-17.10-server-amd64.iso',
+             'http://165.242.111.93/ubuntu-17.10-server-amd64.iso'
              ]
 
     urls2 = [
@@ -41,7 +41,7 @@ if __name__ == '__main__':
     with open('test', 'wb') as f:
         pass
     begin = time.monotonic()
-    with Downloader(urls=urls4,
+    with Downloader(urls=urls0,
                     split_size=1000000,
                     logger=local_logger,
                     ) as dl:

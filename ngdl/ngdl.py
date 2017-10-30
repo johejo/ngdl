@@ -138,7 +138,8 @@ class Downloader(object):
         parsed_url = urlparse(url)  # type: ParseResult
 
         sess = requests.Session()
-        sess.mount(parsed_url.scheme+'://'+parsed_url.netloc+':'+str(port), HTTP20Adapter())
+        prefix = parsed_url.scheme + '://' + parsed_url.netloc
+        sess.mount(prefix, HTTP20Adapter())
         resp = sess.head(url=url)
         status = resp.status_code
 
@@ -216,17 +217,20 @@ class Downloader(object):
             kill_all()
 
     def _get_param_index(self, index):
-        c = self._url_received_counts[index]
-        m = max(self._url_received_counts)
 
         if self._power == 0:
             return 0
 
+        c = self._url_received_counts[index]
+        m = max(self._url_received_counts)
+
         try:
-            x = int(self._bias * (1.0 - c / m) ** self._power)
+            x = c / m
+            # y = int(self._bias * (1.0 - x) ** self._power)
+            y = int(self._bias * (1.0 - x ** self._power))
         except ZeroDivisionError:
-            x = 0
-        return x
+            y = 0
+        return y
 
     def _request(self):
         index = self._index.pop()
@@ -336,7 +340,7 @@ class Downloader(object):
         """
         :return bool: status of downloading
         """
-        if self._received_index == self._request_num:
+        if self._received_index == self._request_num != 0:
             return False
         else:
             return True
