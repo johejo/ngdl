@@ -140,7 +140,7 @@ class Downloader(object):
         sess = requests.Session()
         prefix = parsed_url.scheme + '://' + parsed_url.netloc
         sess.mount(prefix, HTTP20Adapter())
-        resp = requests.head(url=url)
+        resp = sess.head(url=url)
         status = resp.status_code
 
         if 301 <= status <= 303 or 307 <= status <= 308:
@@ -149,7 +149,7 @@ class Downloader(object):
             self._urls.append(location)
             print('Host {} is redirected to {}'.format(url, location), file=sys.stderr)
             sess = self._check_url(url=location)
-            resp = requests.head(url=location)
+            resp = sess.head(url=location)
 
         elif status != 200:
             self.logger.debug('Invalid status code: {0}'.format(str(status)))
