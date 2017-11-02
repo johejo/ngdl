@@ -16,6 +16,7 @@ if __name__ == '__main__':
         xticks.append(key)
         avg.append(value['avg'])
         stdev.append(value['stdev'])
+    plt.figure(figsize=(24, 10))
 
     x = [i + 0.4 for i in range(len(result))]
     plt.bar(range(len(result)), avg, width=0.4, align='center', label='AVG')
@@ -26,4 +27,4 @@ if __name__ == '__main__':
     plt.xlabel('bias, power')
     plt.title('AVG and STDEV of the number of simultaneous write blocks')
 
-    plt.savefig('write_block_num_1024.pdf')
+    plt.savefig('write_block_num_1029-w.pdf')

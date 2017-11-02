@@ -43,7 +43,7 @@ class Downloader(object):
         self._power = power
         self._urls = urls.copy()
         default = 1.0 / len(urls)
-        self._priority = [default for url in urls]
+        self._priority = [default for _ in urls]
 
         self._length_list = []
         self._sessions = [self._check_url(url) for url in urls]  # type: List[requests.Session]
@@ -54,7 +54,7 @@ class Downloader(object):
             for j in range(parallel_num):
                 self._index.append(i)
         random.shuffle(self._index)
-        self._url_received_counts = [0 for i in range(len(self._urls))]
+        self._url_received_counts = [0 for _ in range(len(self._urls))]
 
         self._is_started = False
 
@@ -91,9 +91,10 @@ class Downloader(object):
 
         self._received_index = 0
         self._future_resp = deque()
-        self._data = [None for i in range(self._request_num)]
+        self._data = [None for _ in range(self._request_num)]
         self._executor = ThreadPoolExecutor(max_workers=parallel_num * len(self._urls))
-        self._return_block_num = deque()
+        self._return_block_num = []
+        self._accumulation = []
 
         self._plot = []
         self._time = []
@@ -137,7 +138,8 @@ class Downloader(object):
         parsed_url = urlparse(url)  # type: ParseResult
 
         sess = requests.Session()
-        sess.mount(parsed_url.scheme+'://'+parsed_url.netloc+':'+str(port), HTTP20Adapter())
+        prefix = parsed_url.scheme + '://' + parsed_url.netloc
+        sess.mount(prefix, HTTP20Adapter())
         resp = sess.head(url=url)
         status = resp.status_code
 
@@ -215,17 +217,20 @@ class Downloader(object):
             kill_all()
 
     def _get_param_index(self, index):
-        c = self._url_received_counts[index]
-        m = max(self._url_received_counts)
 
         if self._power == 0:
             return 0
 
+        c = self._url_received_counts[index]
+        m = max(self._url_received_counts)
+
         try:
-            x = int(self._bias * (1.0 - c / m) ** self._power)
+            x = c / m
+            # y = int(self._bias * (1.0 - x) ** self._power)
+            y = int(self._bias * (1.0 - x ** self._power))
         except ZeroDivisionError:
-            x = 0
-        return x
+            y = 0
+        return y
 
     def _request(self):
         index = self._index.pop()
@@ -281,7 +286,8 @@ class Downloader(object):
         if self.is_continue() is False:
             return {'exp_data': self._exp_data,
                     'server_result': dict(zip(self._urls, self._url_received_counts)),
-                    'return_block_num': self._return_block_num
+                    'return_block_num': self._return_block_num,
+                    'accumulation': self._accumulation
                     }
 
     def get_bytes(self):
@@ -313,13 +319,20 @@ class Downloader(object):
                 break
             else:
                 b += self._data[i]
-                self._data[i] = b''
+                self._data[i] = None
                 i += 1
                 count += 1
         self._received_index = i
         if count != 0:
             self._return_block_num.append(count)
             self.logger.debug('Return {} bytes {} blocks'.format(len(b), count))
+
+            accumulation = 0
+            for data in self._data:
+                if data is not None:
+                    accumulation += 1
+
+            self._accumulation.append(accumulation)
         gc.collect()
         return b
 
@@ -327,7 +340,7 @@ class Downloader(object):
         """
         :return bool: status of downloading
         """
-        if self._received_index == self._request_num:
+        if self._received_index == self._request_num != 0:
             return False
         else:
             return True
