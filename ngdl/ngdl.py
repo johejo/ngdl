@@ -10,6 +10,7 @@ import requests
 import time
 from requests.exceptions import ConnectionError
 from hyper.contrib import HTTP20Adapter
+from hyper import HTTPConnection, HTTP20Connection, HTTP11Connection
 
 from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRange
 from .utils import map_all, get_order, kill_all
@@ -46,7 +47,7 @@ class Downloader(object):
         self._priority = [default for _ in urls]
 
         self._length_list = []
-        self._sessions = [self._check_url(url) for url in urls]  # type: List[requests.Session]
+        self._conns = [self._check_url(url) for url in urls]
         self._ports = []
         self._index = deque()
 
@@ -104,7 +105,7 @@ class Downloader(object):
     def _check_url(self, url):
         """
         :param url: str
-        :return: sess requests.Session
+        :return: conn
         """
         parsed_url = urlparse(url)  # type: ParseResult
 
@@ -126,37 +127,37 @@ class Downloader(object):
         else:
             raise PortError
 
-        return self._check_host(url, port)  # type: requests.Session
+        return self._check_host(url, port)
 
     def _check_host(self, url, port):
         """
         :param url: str
         :param port: int
-        :return: sess: request.Session
+        :return: sess
         """
 
         parsed_url = urlparse(url)  # type: ParseResult
 
-        sess = requests.Session()
-        prefix = parsed_url.scheme + '://' + parsed_url.netloc
-        sess.mount(prefix, HTTP20Adapter())
-        resp = sess.head(url=url)
-        status = resp.status_code
+        conn = HTTPConnection(parsed_url.hostname, port=port)
+        conn.request('HEAD', url=parsed_url.path)
+        resp = conn.get_response()
+        status = resp.status
 
         if 301 <= status <= 303 or 307 <= status <= 308:
-            location = resp.headers['Location']
+            location = resp.headers['Location'][0].decode()
             self._urls.remove(url)
             self._urls.append(location)
             print('Host {} is redirected to {}'.format(url, location), file=sys.stderr)
-            sess = self._check_url(url=location)
-            resp = sess.head(url=location)
+            conn = self._check_url(url=location)
+            conn.request('HEAD', url=location)
+            resp = conn.get_response()
 
         elif status != 200:
             self.logger.debug('Invalid status code: {0}'.format(str(status)))
             raise StatusCodeError
 
         try:
-            length = (resp.headers['Content-Length'])
+            length = (resp.headers['Content-Length'][0].decode())
         except KeyError:
             raise NoContentLength
 
@@ -167,7 +168,7 @@ class Downloader(object):
 
         self._length_list.append(length)
 
-        return sess  # type: requests.Session
+        return conn
 
     def start_download(self):
         for i in range(self._request_num):
@@ -242,13 +243,14 @@ class Downloader(object):
         except IndexError:
             param = self._params.pop(0)
 
-        sess = self._sessions[index]  # type: requests.Session
+        conn = self._conns[index]
         url = self._urls[index]
+        parsed_url = urlparse(url)
         self.logger.debug('Send request index: {} header:  {}'
                           .format(param['index'], param['headers']['Range']))
 
         try:
-            resp = sess.request(method=param['method'], url=url, headers=param['headers'])
+            conn.request(method=param['method'], url=parsed_url.path, headers=param['headers'])
         except ConnectionError as e:
             self.logger.debug('{}'.format(e))
 
@@ -258,18 +260,25 @@ class Downloader(object):
             self._index.append(self._get_index_rand())
             return self._request()
 
-        status = resp.status_code
-        if status != 206:
-            self.logger.debug('Failed {} status {}'.format(self._urls[index], status))
-
+        try:
+            resp = conn.get_response()
+        except ConnectionResetError:
             self._params.insert(0, param)
-
             self._set_priority(index, 0)
             self._index.append(self._get_index_rand())
             return self._request()
 
-        content = resp.content
-        range_header = resp.headers['Content-Range']
+        status = resp.status
+        if status != 206:
+            self.logger.debug('Failed {} status {}'.format(self._urls[index], status))
+
+            self._params.insert(0, param)
+            self._set_priority(index, 0)
+            self._index.append(self._get_index_rand())
+            return self._request()
+
+        content = resp.read()
+        range_header = resp.headers['Content-Range'][0].decode()
         order = get_order(range_header, self._split_size)
         self.logger.debug(msg='Received response order: {} header: {}'
                           .format(order, range_header))
@@ -345,9 +354,12 @@ class Downloader(object):
         else:
             return True
 
+    def close(self):
+        self._executor.shutdown()
+
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._executor.shutdown()
+        self.close()
         return False
