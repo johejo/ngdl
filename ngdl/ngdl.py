@@ -5,11 +5,13 @@ from collections import deque
 import random
 from logging import getLogger, NullHandler
 import gc
+import traceback
 import sys
 import requests
 import time
 from requests.exceptions import ConnectionError
 from hyper.contrib import HTTP20Adapter, HTTPAdapter
+from hyper.http11.parser import ParseError
 
 from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRange
 from .utils import map_all, get_order, kill_all
@@ -21,6 +23,7 @@ DEFAULT_SPLIT_SIZE = 1000
 DEFAULT_BIAS = 0
 DEFAULT_POW = 0
 DEFAULT_PARALLEL_NUM = 5
+DEFAULT_THRESHOLD_RETRANSMISSION = 20
 
 
 class Downloader(object):
@@ -48,12 +51,12 @@ class Downloader(object):
         self._length_list = []
         self._sessions = [self._check_url(url) for url in urls]  # type: List[requests.Session]
         self._ports = []
-        self._index = deque()
+        self._host_ids = deque()
 
         for i in range(len(self._urls)):
             for j in range(parallel_num):
-                self._index.append(i)
-        random.shuffle(self._index)
+                self._host_ids.append(i)
+        random.shuffle(self._host_ids)
         self._url_received_counts = [0 for _ in range(len(self._urls))]
 
         self._is_started = False
@@ -101,6 +104,13 @@ class Downloader(object):
         self._exp_data = []
         self._begin_time = time.monotonic()
 
+        self._bad_hosts = []
+        self._bad_index = []
+
+        self._used_params = [None for _ in range(self._request_num)]
+
+        self.logger.debug('Init')
+
     def _check_url(self, url):
         """
         :param url: str
@@ -139,8 +149,10 @@ class Downloader(object):
 
         sess = requests.Session()
         prefix = parsed_url.scheme + '://' + parsed_url.netloc
-        sess.mount(prefix, HTTP20Adapter())
-        resp = sess.head(url=url)
+        self.logger.debug('Prefix: {}'.format(prefix))
+        # sess.mount(prefix, HTTP20Adapter())
+        sess.mount(prefix, HTTPAdapter())
+        resp = sess.head(url=url, verify=False)
         status = resp.status_code
 
         if 301 <= status <= 303 or 307 <= status <= 308:
@@ -154,6 +166,8 @@ class Downloader(object):
         elif status != 200:
             self.logger.debug('Invalid status code: {0}'.format(str(status)))
             raise StatusCodeError
+
+        self.logger.debug('File has found: {}'.format(url))
 
         try:
             length = (resp.headers['Content-Length'])
@@ -230,59 +244,108 @@ class Downloader(object):
             y = int(self._bias * (1.0 - x ** self._power))
         except ZeroDivisionError:
             y = 0
+
         return y
 
-    def _request(self):
-        index = self._index.pop()
+    def _get_randrange(self):
+        rand = random.randrange(len(self._urls))
+        if rand in self._bad_index:
+            return self._get_randrange()
+        else:
+            return rand
 
-        x = self._get_param_index(index)
+    def _set_bad_host(self, host_id):
+        if host_id not in self._bad_index:
+            self._bad_hosts.append(self._urls[host_id])
+            self._bad_index.append(host_id)
+
+    def _re_request_new_session(self, host_id, param):
+        self._host_ids.append(host_id)
+        new_sess = self._remake_session(host_id)
+        self._sessions.insert(host_id, new_sess)
+        self._params.insert(0, param)
+        return self._request()
+
+    def _re_request_other_session(self, host_id, param):
+        self._set_bad_host(host_id)
+        new_index = self._get_randrange()
+        self.logger.debug('New index: {}'.format(new_index))
+        self._host_ids.append(new_index)
+        self._params.insert(0, param)
+        return self._request()
+
+    def _remake_session(self, host_id):
+        url = self._urls[host_id]
+        return self._check_url(url)
+
+    def _request(self):
+
+        print(self._host_ids)
+        print(self._bad_index)
+        print(self._bad_hosts)
+
+        try:
+            host_id = self._host_ids.pop()
+        except IndexError:
+            print(self._host_ids)
+            kill_all()
+            return
+
+        x = self._get_param_index(host_id)
 
         try:
             param = self._params.pop(x)
         except IndexError:
             param = self._params.pop(0)
 
-        sess = self._sessions[index]  # type: requests.Session
-        url = self._urls[index]
-        self.logger.debug('Send request index: {} header:  {}'
-                          .format(param['index'], param['headers']['Range']))
+        sess = self._sessions[host_id]  # type: requests.Session
+        url = self._urls[host_id]
+        parsed_url = urlparse(url)
+        self.logger.debug('Send request host_id: {} host: {} header:  {}'
+                          .format(param['host_id'], parsed_url.hostname, param['headers']['Range']))
 
-        resp = sess.request(method=param['method'], url=url, headers=param['headers'])
-        # try:
-        #     resp = sess.request(method=param['method'], url=url, headers=param['headers'])
-        # except ConnectionResetError as e:
-            # self.logger.debug('{}'.format(e))
-            #
-            # self._params.insert(0, param)
-            #
-            # self._set_priority(index, 0)
-            # self._index.append(self._get_index_rand())
-            # return self._request()
-            # pass
+        try:
+            resp = sess.get(verify=False, url=url, headers=param['headers'])
 
+        except ConnectionResetError:
+            self.logger.debug('Reset Connection host_id: {} host:: {}'.format(host_id, self._urls[host_id]))
+            return self._re_request_new_session(host_id, param)
+
+        except ParseError:
+            self.logger.debug('ParserError')
+            return self._re_request_new_session(host_id, param)
+
+        except ValueError:
+            self.logger.debug('ValueError')
+            return self._re_request_new_session(host_id, param)
+
+        self._used_params[param['host_id']] = param
         status = resp.status_code
         if status != 206:
-            self.logger.debug('Failed {} status {}'.format(self._urls[index], status))
-
-            self._params.insert(0, param)
-
-            self._set_priority(index, 0)
-            self._index.append(self._get_index_rand())
-            return self._request()
+            self.logger.debug('Failed {} status: {} host_id: {}'.format(self._urls[host_id], status, host_id))
+            return self._re_request_other_session(host_id, param)
 
         content = resp.content
         range_header = resp.headers['Content-Range']
         order = get_order(range_header, self._split_size)
-        self.logger.debug(msg='Received response order: {} header: {}'
-                          .format(order, range_header))
+        self.logger.debug(msg='Received response order: {} header: {} from {}'
+                          .format(order, range_header, parsed_url.hostname))
 
-        self._index.append(index)
-        random.shuffle(self._index)
-        self._url_received_counts[index] += 1
+        self._host_ids.append(host_id)
+        random.shuffle(self._host_ids)
+        self._url_received_counts[host_id] += 1
 
         self._exp_data.append({'time': time.monotonic() - self._begin_time, 'order': order})
 
         return order, content
+
+    def _get_retransmission_index(self):
+        index = 0
+        for data in self._data:
+            if data is None:
+                return index
+            else:
+                index += 1
 
     def get_result(self):
         if self.is_continue() is False:
@@ -315,19 +378,38 @@ class Downloader(object):
 
         b = bytearray()
         i = self._received_index
-        count = 0
+        stack_count = 0
+        return_count = 0
+        byte_link_flag = True
+        return_flag = False
+        received_count = 0
+
         while i < len(self._data):
             if self._data[i] is None:
-                break
+                byte_link_flag = False
             else:
-                b += self._data[i]
-                self._data[i] = None
-                i += 1
-                count += 1
-        self._received_index = i
-        if count != 0:
-            self._return_block_num.append(count)
-            self.logger.debug('Return {} bytes {} blocks'.format(len(b), count))
+                if byte_link_flag:
+                    return_count += 1
+                    received_count += 1
+                    b += self._data[i]
+                    self._data[i] = None
+                    return_flag = True
+                else:
+                    stack_count += 1
+                    if stack_count > DEFAULT_THRESHOLD_RETRANSMISSION:
+                        retransmission_index = self._get_retransmission_index()
+                        self.logger.debug('Retransmit: {}'.format(retransmission_index))
+                        self._host_ids.append(self._get_randrange())
+                        self._params.append(self._used_params[retransmission_index])
+                        self._future_resp.append(self._executor.submit(self._request()))
+            i += 1
+
+        self._received_index = received_count
+
+        if return_flag:
+            self._return_block_num.append(return_count)
+            self.logger.debug('Return blocks. bytes: {} return_count: {} stack_count: {}'
+                              .format(len(b), return_count, stack_count))
 
             accumulation = 0
             for data in self._data:
@@ -335,7 +417,6 @@ class Downloader(object):
                     accumulation += 1
 
             self._accumulation.append(accumulation)
-        gc.collect()
         return b
 
     def is_continue(self):
