@@ -9,7 +9,7 @@ import sys
 import requests
 import time
 from requests.exceptions import ConnectionError
-from hyper.contrib import HTTP20Adapter
+from hyper.contrib import HTTP20Adapter, HTTPAdapter
 
 from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRange
 from .utils import map_all, get_order, kill_all
@@ -247,16 +247,18 @@ class Downloader(object):
         self.logger.debug('Send request index: {} header:  {}'
                           .format(param['index'], param['headers']['Range']))
 
-        try:
-            resp = sess.request(method=param['method'], url=url, headers=param['headers'])
-        except ConnectionError as e:
-            self.logger.debug('{}'.format(e))
-
-            self._params.insert(0, param)
-
-            self._set_priority(index, 0)
-            self._index.append(self._get_index_rand())
-            return self._request()
+        resp = sess.request(method=param['method'], url=url, headers=param['headers'])
+        # try:
+        #     resp = sess.request(method=param['method'], url=url, headers=param['headers'])
+        # except ConnectionResetError as e:
+            # self.logger.debug('{}'.format(e))
+            #
+            # self._params.insert(0, param)
+            #
+            # self._set_priority(index, 0)
+            # self._index.append(self._get_index_rand())
+            # return self._request()
+            # pass
 
         status = resp.status_code
         if status != 206:

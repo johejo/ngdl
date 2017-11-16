@@ -42,7 +42,7 @@ if __name__ == '__main__':
         pass
     begin = time.monotonic()
     with open('test', 'ab') as f:
-        with Downloader(urls=urls2,
+        with Downloader(urls=urls0,
                         split_size=1000000,
                         logger=local_logger,
                         ) as dl:
@@ -53,8 +53,10 @@ if __name__ == '__main__':
                 get_bytes_len += len(b)
                 f.write(b)
                 gc.collect()
+            end = time.monotonic()
             local_logger.debug('TOTAL: {} bytes'.format(get_bytes_len))
-            local_logger.debug('TIME: {}'.format(time.monotonic() - begin))
+            local_logger.debug('TIME: {} sec'.format(end - begin))
+            local_logger.debug('Throughput: {} Mbps'.format(get_bytes_len * 8 / (end - begin) / (10**6)))
             result = dl.get_result()
 
     print(result['return_block_num'])
