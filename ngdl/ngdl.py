@@ -306,7 +306,7 @@ class Downloader(object):
             self.logger.debug('Diff: {}'.format(diff))
             self._previous_received_count[host_id] = self._current_receive_count
 
-            if diff < 10:
+            if diff <= len(self._urls):
                 x = 0
             else:
                 x = diff

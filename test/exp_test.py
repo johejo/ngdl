@@ -53,14 +53,14 @@ if __name__ == '__main__':
     # bias_list = [10, 20]
     # power_list = [1, 2]
 
-    params = [(0, 0, None), (50, 1, None), (0, 0, 'MODE_ESTIMATE')]
+    params = [(0, 0, 'MODE_ESTIMATE'), (0, 0, None), (50, 1, None), (50, 5, None)]
 
     # for bias in bias_list:
     #     for power in power_list:
     #         params.append((bias, power))
 
     split_size = 1000000
-    times = 10
+    times = 1
 
     statistic_data = {}
     statistic_result = {}
