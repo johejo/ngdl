@@ -19,7 +19,7 @@ if __name__ == '__main__':
                     split_size=1000000,
                     parallel_num=1
                     ) as dl:
-        dl._set_bad_host(target)
+        dl._set_bad_url(target)
         for i in range(100):
             x = dl._get_randrange()
             assert x != target

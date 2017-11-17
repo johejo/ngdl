@@ -20,11 +20,11 @@ if __name__ == '__main__':
              ]
 
     urls2 = [
-        'http://www.ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.10/ubuntu-17.10-server-amd64.iso',  # KDDI
+        'http://ftp.ne.jp/Linux/packages/ubuntu/releases-cd/17.10/ubuntu-17.10-server-amd64.iso',  # KDDI
         'http://ubuntutym2.u-toyama.ac.jp/ubuntu/17.10/ubuntu-17.10-server-amd64.iso',  # toyama
         'http://ftp.riken.go.jp/Linux/ubuntu-releases/17.10/ubuntu-17.10-server-amd64.iso',  # riken
         'http://ftp.jaist.ac.jp/pub/Linux/ubuntu-releases/17.10/ubuntu-17.10-server-amd64.iso',  # jaist
-        'http://ftp.yz.yamagata-u.ac.jp/pub/linux/ubuntu/releases/17.10/ubuntu-17.10-server-amd64.iso',  # yamagata
+        # 'http://ftp.yz.yamagata-u.ac.jp/pub/linux/ubuntu/releases/17.10/ubuntu-17.10-server-amd64.iso',  # yamagata
     ]
 
     urls3 = [
@@ -36,11 +36,13 @@ if __name__ == '__main__':
     ]
 
     urls0s = ['https://165.242.111.92/ubuntu-17.10-server-i386.template',
-              'https://165.242.111.93/ubuntu-17.10-server-i386.template'
+              'https://165.242.111.93/ubuntu-17.10-server-i386.template',
+              'https://165.242.111.94/ubuntu-17.10-server-i386.template',
               ]
 
     urls1s = ['https://165.242.111.92/ubuntu-17.10-server-amd64.iso',
-              'https://165.242.111.93/ubuntu-17.10-server-amd64.iso'
+              'https://165.242.111.93/ubuntu-17.10-server-amd64.iso',
+              'https://165.242.111.94/ubuntu-17.10-server-amd64.iso',
               ]
 
     urls4 = urls0s + urls3
@@ -50,12 +52,13 @@ if __name__ == '__main__':
         pass
     begin = time.monotonic()
     with open('test', 'ab') as f:
-        with Downloader(urls=urls4,
+        with Downloader(urls=urls5,
                         split_size=1000000,
                         logger=local_logger,
                         parallel_num=1,
-                        power=1,
+                        power=0,
                         bias=50,
+                        mode='MODE_ESTIMATE',
                         ) as dl:
             local_logger.debug('STARTED')
             get_bytes_len = 0
