@@ -6,6 +6,7 @@ import random
 from logging import getLogger, NullHandler
 import gc
 import traceback
+import statistics
 import sys
 import requests
 import time
@@ -27,6 +28,9 @@ DEFAULT_PARALLEL_NUM = 5
 DEFAULT_THRESHOLD_RETRANSMISSION = 20
 
 MODE_ESTIMATE = 'MODE_ESTIMATE'
+MODE_CONVEX_DOWNWARD = 'MODE_CONVEX_DOWNWARD'
+MODE_CONVEX_UPWARD = 'MODE_CONVEX_UPWARD'
+MODE_NORMAL = 'MODE_NORMAL'
 
 
 class Downloader(object):
@@ -67,16 +71,16 @@ class Downloader(object):
 
         if map_all(self._length_list) is False:
             raise FileSizeError
-        length = int(self._length_list[0])
+        self._length = int(self._length_list[0])
 
-        if length < split_size:
-            self._split_size = length // len(urls)
+        if self._length < split_size:
+            self._split_size = self._length // len(urls)
         else:
             self._split_size = split_size
 
         begin = 0
-        self._request_num = length // split_size
-        reminder = length % split_size
+        self._request_num = self._length // split_size
+        reminder = self._length % split_size
         if reminder != 0:
             self._request_num += 1
 
@@ -97,7 +101,7 @@ class Downloader(object):
             begin += split_size
 
         self._received_index = 0
-        self._future_resp = deque()
+        self._future_resp = []
         self._data = [None for _ in range(self._request_num)]
         self._executor = ThreadPoolExecutor(max_workers=parallel_num * len(self._urls))
         self._return_block_num = []
@@ -107,15 +111,17 @@ class Downloader(object):
         self._time = []
         self._exp_data = []
         self._begin_time = time.monotonic()
+        self._end_time = None
 
         self._bad_urls = []
-        self._bad_index = []
+        self._bad_host_id = []
 
         self._used_params = [None for _ in range(self._request_num)]
         self._previous_received_count = [0 for _ in range(len(self._urls))]
         self._current_receive_count = 0
         self._hosts = [urlparse(url).hostname for url in self._urls]
         self._mode = mode
+        self._diffs = []
 
         self.logger.debug('Init')
 
@@ -248,8 +254,16 @@ class Downloader(object):
 
         try:
             x = c / m
-            # y = int(self._bias * (1.0 - x) ** self._power)
-            y = int(self._bias * (1.0 - x ** self._power))
+            self.logger.debug('Ratio: {}'.format(x))
+            if self._mode == MODE_CONVEX_DOWNWARD:
+                y = int(self._bias * (1.0 - (1.5 * x)) ** self._power)
+            elif self._mode == MODE_CONVEX_UPWARD:
+                y = int(self._bias * (1.0 - (1.5 * x) ** self._power))
+            else:
+                y = 0
+
+            if y < 0:
+                y = 0
         except ZeroDivisionError:
             y = 0
 
@@ -257,15 +271,15 @@ class Downloader(object):
 
     def _get_randrange(self):
         rand = random.randrange(len(self._urls))
-        if rand in self._bad_index:
+        if rand in self._bad_host_id:
             return self._get_randrange()
         else:
             return rand
 
     def _set_bad_url(self, host_id):
-        if host_id not in self._bad_index:
+        if host_id not in self._bad_host_id:
             self._bad_urls.append(self._urls[host_id])
-            self._bad_index.append(host_id)
+            self._bad_host_id.append(host_id)
 
     def _re_request_new_session(self, host_id, param):
         self._host_ids.append(host_id)
@@ -288,28 +302,37 @@ class Downloader(object):
 
     def _request(self):
 
-        # print(self._host_ids)
-        # print(self._bad_index)
-        # print(self._bad_urls)
+        print(self._host_ids)
+        print(self._bad_host_id)
+        print(self._bad_urls)
 
-        try:
-            host_id = self._host_ids.pop()
-        except IndexError:
-            print(self._host_ids)
-            kill_all()
-            return
+        while True:
+            try:
+                host_id = self._host_ids.pop()
+                break
+            except IndexError:
+                self.logger.debug('Que is empty')
+                self._host_ids.append(self._get_randrange())
+                continue
 
         if self._mode == MODE_ESTIMATE:
             self._current_receive_count += 1
             previous = self._previous_received_count[host_id]
             diff = self._current_receive_count - previous
+            self._diffs.append(diff)
             self.logger.debug('Diff: {}'.format(diff))
             self._previous_received_count[host_id] = self._current_receive_count
 
-            if diff <= len(self._urls):
+            mean = statistics.mean(self._diffs)
+            if diff <= mean:
+                self.logger.debug('Diff mean: {}'.format(mean))
                 x = 0
             else:
                 x = diff
+
+        elif self._mode == MODE_NORMAL:
+            x = 0
+
         else:
             x = self._get_param_index(host_id)
 
@@ -362,7 +385,7 @@ class Downloader(object):
                           .format(order, range_header, parsed_url.hostname))
 
         self._host_ids.append(host_id)
-        random.shuffle(self._host_ids)
+        # random.shuffle(self._host_ids)
         self._url_received_counts[host_id] += 1
 
         self._exp_data.append({'time': time.monotonic() - self._begin_time, 'order': order})
@@ -384,11 +407,17 @@ class Downloader(object):
             parsed_url = urlparse(url)
             server_result[parsed_url.hostname] = count
 
+        if self._end_time is not None:
+            thp = self._length * 8 / (self._end_time - self._begin_time) / 10 ** 6
+        else:
+            thp = 0
+
         if self.is_continue() is False:
             return {'exp_data': self._exp_data,
                     'server_result': server_result,
                     'return_block_num': self._return_block_num,
-                    'accumulation': self._accumulation
+                    'accumulation': self._accumulation,
+                    'thp': thp,
                     }
 
     def get_bytes(self):
@@ -443,6 +472,7 @@ class Downloader(object):
 
             self._accumulation.append(stack_count)
 
+        gc.collect()
         return b
 
     def is_continue(self):
@@ -450,12 +480,15 @@ class Downloader(object):
         :return bool: status of downloading
         """
         if self._received_index == self._request_num != 0:
+            if self._end_time is None:
+                self._end_time = time.monotonic()
             return False
         else:
             return True
 
     def close(self):
         self._executor.shutdown()
+        gc.collect()
 
     def __enter__(self):
         return self
