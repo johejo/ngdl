@@ -76,7 +76,7 @@ if __name__ == '__main__':
                 pass
             begin = time.monotonic()
             with open('test', 'ab') as f:
-                with Downloader(urls=urls4,
+                with Downloader(urls=urls5,
                                 split_size=1000000,
                                 logger=local_logger,
                                 parallel_num=1,

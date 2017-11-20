@@ -302,9 +302,9 @@ class Downloader(object):
 
     def _request(self):
 
-        print(self._host_ids)
-        print(self._bad_host_id)
-        print(self._bad_urls)
+        # print(self._host_ids)
+        # print(self._bad_host_id)
+        # print(self._bad_urls)
 
         while True:
             try:
