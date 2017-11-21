@@ -16,7 +16,7 @@ if __name__ == '__main__':
         xticks.append(key)
         avg.append(value['avg'])
         stdev.append(value['stdev'])
-    plt.figure(figsize=(24, 10))
+    # plt.figure(figsize=(24, 10))
 
     x = [i + 0.4 for i in range(len(result))]
     plt.bar(range(len(result)), avg, width=0.4, align='center', label='AVG')

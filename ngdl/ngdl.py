@@ -5,11 +5,15 @@ from collections import deque
 import random
 from logging import getLogger, NullHandler
 import gc
+import traceback
+import statistics
 import sys
 import requests
 import time
 from requests.exceptions import ConnectionError
-from hyper.contrib import HTTP20Adapter
+from hyper.contrib import HTTP20Adapter, HTTPAdapter
+from hyper.http11.parser import ParseError
+from requests.exceptions import Timeout
 
 from .exceptions import PortError, StatusCodeError, NoContentLength, FileSizeError, URIError, NoAcceptRange
 from .utils import map_all, get_order, kill_all
@@ -21,6 +25,12 @@ DEFAULT_SPLIT_SIZE = 1000
 DEFAULT_BIAS = 0
 DEFAULT_POW = 0
 DEFAULT_PARALLEL_NUM = 5
+DEFAULT_THRESHOLD_RETRANSMISSION = 20
+
+MODE_ESTIMATE = 'MODE_ESTIMATE'
+MODE_CONVEX_DOWNWARD = 'MODE_CONVEX_DOWNWARD'
+MODE_CONVEX_UPWARD = 'MODE_CONVEX_UPWARD'
+MODE_NORMAL = 'MODE_NORMAL'
 
 
 class Downloader(object):
@@ -29,6 +39,7 @@ class Downloader(object):
                  logger=local_logger,
                  bias=DEFAULT_BIAS,
                  power=DEFAULT_POW,
+                 mode=None,
                  ):
         """
         :param list urls: URL list
@@ -48,28 +59,28 @@ class Downloader(object):
         self._length_list = []
         self._sessions = [self._check_url(url) for url in urls]  # type: List[requests.Session]
         self._ports = []
-        self._index = deque()
+        self._host_ids = deque()
 
         for i in range(len(self._urls)):
             for j in range(parallel_num):
-                self._index.append(i)
-        random.shuffle(self._index)
+                self._host_ids.append(i)
+        random.shuffle(self._host_ids)
         self._url_received_counts = [0 for _ in range(len(self._urls))]
 
         self._is_started = False
 
         if map_all(self._length_list) is False:
             raise FileSizeError
-        length = int(self._length_list[0])
+        self._length = int(self._length_list[0])
 
-        if length < split_size:
-            self._split_size = length // len(urls)
+        if self._length < split_size:
+            self._split_size = self._length // len(urls)
         else:
             self._split_size = split_size
 
         begin = 0
-        self._request_num = length // split_size
-        reminder = length % split_size
+        self._request_num = self._length // split_size
+        reminder = self._length % split_size
         if reminder != 0:
             self._request_num += 1
 
@@ -82,7 +93,7 @@ class Downloader(object):
             else:
                 end = begin + split_size - 1
 
-            param = {'index': i,
+            param = {'host_id': i,
                      'method': 'GET',
                      'headers': {'Range': 'bytes={0}-{1}'.format(begin, end)}
                      }
@@ -90,7 +101,7 @@ class Downloader(object):
             begin += split_size
 
         self._received_index = 0
-        self._future_resp = deque()
+        self._future_resp = []
         self._data = [None for _ in range(self._request_num)]
         self._executor = ThreadPoolExecutor(max_workers=parallel_num * len(self._urls))
         self._return_block_num = []
@@ -100,6 +111,19 @@ class Downloader(object):
         self._time = []
         self._exp_data = []
         self._begin_time = time.monotonic()
+        self._end_time = None
+
+        self._bad_urls = []
+        self._bad_host_id = []
+
+        self._used_params = [None for _ in range(self._request_num)]
+        self._previous_received_count = [0 for _ in range(len(self._urls))]
+        self._current_receive_count = 0
+        self._hosts = [urlparse(url).hostname for url in self._urls]
+        self._mode = mode
+        self._diffs = []
+
+        self.logger.debug('Init')
 
     def _check_url(self, url):
         """
@@ -139,8 +163,10 @@ class Downloader(object):
 
         sess = requests.Session()
         prefix = parsed_url.scheme + '://' + parsed_url.netloc
+        self.logger.debug('Prefix: {}'.format(prefix))
         sess.mount(prefix, HTTP20Adapter())
-        resp = sess.head(url=url)
+        # sess.mount(prefix, HTTPAdapter())
+        resp = sess.head(url=url, verify=False)
         status = resp.status_code
 
         if 301 <= status <= 303 or 307 <= status <= 308:
@@ -154,6 +180,8 @@ class Downloader(object):
         elif status != 200:
             self.logger.debug('Invalid status code: {0}'.format(str(status)))
             raise StatusCodeError
+
+        self.logger.debug('File has found: {}'.format(url))
 
         try:
             length = (resp.headers['Content-Length'])
@@ -226,68 +254,171 @@ class Downloader(object):
 
         try:
             x = c / m
-            # y = int(self._bias * (1.0 - x) ** self._power)
-            y = int(self._bias * (1.0 - x ** self._power))
+            self.logger.debug('Ratio: {}'.format(x))
+            if self._mode == MODE_CONVEX_DOWNWARD:
+                y = int(self._bias * (1.0 - (1.5 * x)) ** self._power)
+            elif self._mode == MODE_CONVEX_UPWARD:
+                y = int(self._bias * (1.0 - (1.5 * x) ** self._power))
+            else:
+                y = 0
+
+            if y < 0:
+                y = 0
         except ZeroDivisionError:
             y = 0
+
         return y
 
+    def _get_randrange(self):
+        rand = random.randrange(len(self._urls))
+        if rand in self._bad_host_id:
+            return self._get_randrange()
+        else:
+            return rand
+
+    def _set_bad_url(self, host_id):
+        if host_id not in self._bad_host_id:
+            self._bad_urls.append(self._urls[host_id])
+            self._bad_host_id.append(host_id)
+
+    def _re_request_new_session(self, host_id, param):
+        self._host_ids.append(host_id)
+        new_sess = self._remake_session(host_id)
+        self._sessions.insert(host_id, new_sess)
+        self._params.insert(0, param)
+        return self._request()
+
+    def _re_request_other_session(self, host_id, param):
+        self._set_bad_url(host_id)
+        new_index = self._get_randrange()
+        self.logger.debug('New index: {}'.format(new_index))
+        self._host_ids.append(new_index)
+        self._params.insert(0, param)
+        return self._request()
+
+    def _remake_session(self, host_id):
+        url = self._urls[host_id]
+        return self._check_url(url)
+
     def _request(self):
-        index = self._index.pop()
 
-        x = self._get_param_index(index)
+        # print(self._host_ids)
+        # print(self._bad_host_id)
+        # print(self._bad_urls)
+
+        while True:
+            try:
+                host_id = self._host_ids.pop()
+                break
+            except IndexError:
+                self.logger.debug('Que is empty')
+                self._host_ids.append(self._get_randrange())
+                continue
+
+        if self._mode == MODE_ESTIMATE:
+            self._current_receive_count += 1
+            previous = self._previous_received_count[host_id]
+            diff = self._current_receive_count - previous
+            self._diffs.append(diff)
+            self.logger.debug('Diff: {}'.format(diff))
+            self._previous_received_count[host_id] = self._current_receive_count
+
+            mean = statistics.mean(self._diffs)
+            if diff <= mean:
+                self.logger.debug('Diff mean: {}'.format(mean))
+                x = 0
+            else:
+                x = diff
+
+        elif self._mode == MODE_NORMAL:
+            x = 0
+
+        else:
+            x = self._get_param_index(host_id)
+
+        while True:
+            try:
+                param = self._params.pop(x)
+                break
+            except IndexError:
+                x -= 1
+
+        sess = self._sessions[host_id]  # type: requests.Session
+        url = self._urls[host_id]
+        parsed_url = urlparse(url)
+        self.logger.debug('Send request index: {} skip: {} host: {} header:  {}'
+                          .format(param['host_id'], x, parsed_url.hostname, param['headers']['Range']))
 
         try:
-            param = self._params.pop(x)
-        except IndexError:
-            param = self._params.pop(0)
+            resp = sess.get(verify=False, url=url, headers=param['headers'], timeout=10)
 
-        sess = self._sessions[index]  # type: requests.Session
-        url = self._urls[index]
-        self.logger.debug('Send request index: {} header:  {}'
-                          .format(param['index'], param['headers']['Range']))
+        except ConnectionResetError as e:
+            print(str(e))
+            self.logger.debug('Reset Connection host_id: {} host:: {}'.format(host_id, self._urls[host_id]))
+            return self._re_request_new_session(host_id, param)
 
-        try:
-            resp = sess.request(method=param['method'], url=url, headers=param['headers'])
-        except ConnectionError as e:
-            self.logger.debug('{}'.format(e))
+        except ParseError:
+            self.logger.debug('ParserError')
+            return self._re_request_new_session(host_id, param)
 
-            self._params.insert(0, param)
+        except ValueError:
+            self.logger.debug('ValueError')
+            return self._re_request_new_session(host_id, param)
 
-            self._set_priority(index, 0)
-            self._index.append(self._get_index_rand())
-            return self._request()
+        except ConnectionError:
+            self.logger.debug('Connection aborted')
+            return self._re_request_new_session(host_id, param)
 
+        except Timeout:
+            self.logger.debug('Timeout')
+            return self._re_request_other_session(host_id, param)
+
+        self._used_params[param['host_id']] = param
         status = resp.status_code
         if status != 206:
-            self.logger.debug('Failed {} status {}'.format(self._urls[index], status))
-
-            self._params.insert(0, param)
-
-            self._set_priority(index, 0)
-            self._index.append(self._get_index_rand())
-            return self._request()
+            self.logger.debug('Failed {} status: {} host_id: {}'.format(self._urls[host_id], status, host_id))
+            return self._re_request_other_session(host_id, param)
 
         content = resp.content
         range_header = resp.headers['Content-Range']
         order = get_order(range_header, self._split_size)
-        self.logger.debug(msg='Received response order: {} header: {}'
-                          .format(order, range_header))
+        self.logger.debug(msg='Received response order: {} header: {} from {}'
+                          .format(order, range_header, parsed_url.hostname))
 
-        self._index.append(index)
-        random.shuffle(self._index)
-        self._url_received_counts[index] += 1
+        self._host_ids.append(host_id)
+        # random.shuffle(self._host_ids)
+        self._url_received_counts[host_id] += 1
 
         self._exp_data.append({'time': time.monotonic() - self._begin_time, 'order': order})
 
         return order, content
 
+    def _get_retransmission_index(self):
+        index = 0
+        for data in self._data:
+            if data is None:
+                return index
+            else:
+                index += 1
+
     def get_result(self):
+
+        server_result = {}
+        for url, count in zip(self._urls, self._url_received_counts):
+            parsed_url = urlparse(url)
+            server_result[parsed_url.hostname] = count
+
+        if self._end_time is not None:
+            thp = self._length * 8 / (self._end_time - self._begin_time) / 10 ** 6
+        else:
+            thp = 0
+
         if self.is_continue() is False:
             return {'exp_data': self._exp_data,
-                    'server_result': dict(zip(self._urls, self._url_received_counts)),
+                    'server_result': server_result,
                     'return_block_num': self._return_block_num,
-                    'accumulation': self._accumulation
+                    'accumulation': self._accumulation,
+                    'thp': thp,
                     }
 
     def get_bytes(self):
@@ -310,29 +441,38 @@ class Downloader(object):
                     continue
                 except TimeoutError:
                     i += 1
+                except TypeError:
+                    continue
 
         b = bytearray()
         i = self._received_index
-        count = 0
+        stack_count = 0
+        return_count = 0
+        byte_link_flag = True
+        return_flag = False
+
         while i < len(self._data):
             if self._data[i] is None:
-                break
+                byte_link_flag = False
             else:
-                b += self._data[i]
-                self._data[i] = None
-                i += 1
-                count += 1
-        self._received_index = i
-        if count != 0:
-            self._return_block_num.append(count)
-            self.logger.debug('Return {} bytes {} blocks'.format(len(b), count))
+                if byte_link_flag:
+                    return_count += 1
+                    b += self._data[i]
+                    self._data[i] = b''
+                    return_flag = True
+                else:
+                    stack_count += 1
+            i += 1
 
-            accumulation = 0
-            for data in self._data:
-                if data is not None:
-                    accumulation += 1
+        if return_flag:
+            self._received_index += return_count
+            len_b = len(b)
+            self._return_block_num.append(return_count)
+            self.logger.debug('Return blocks. bytes: {} return_count: {} stack_count: {}'
+                              .format(len_b, return_count, stack_count))
 
-            self._accumulation.append(accumulation)
+            self._accumulation.append(stack_count)
+
         gc.collect()
         return b
 
@@ -341,13 +481,19 @@ class Downloader(object):
         :return bool: status of downloading
         """
         if self._received_index == self._request_num != 0:
+            if self._end_time is None:
+                self._end_time = time.monotonic()
             return False
         else:
             return True
+
+    def close(self):
+        self._executor.shutdown()
+        gc.collect()
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self._executor.shutdown()
+        self.close()
         return False
