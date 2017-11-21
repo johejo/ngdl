@@ -124,6 +124,6 @@ if __name__ == '__main__':
         with open('statistic_{}.pickle'.format(param_str), 'wb') as f:
             pickle.dump({'rbn_mean': rbn_mean, 'rbn_stdev': rbn_stdev,
                          'stack_mean': stack_mean, 'stack_stdev': stack_stdev,
-                         'thp_mean': thp_mean, 'thp_stdev': thp_mean,
+                         'thp_mean': thp_mean, 'thp_stdev': thp_stdev,
                          }, f)
         gc.collect()

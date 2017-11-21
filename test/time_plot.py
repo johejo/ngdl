@@ -4,7 +4,7 @@ import glob
 
 if __name__ == '__main__':
 
-    filename_list = sorted(glob.glob('log*.pickle'))
+    filename_list = sorted(glob.glob('log_2*.pickle'))
 
     for filename in filename_list:
         param = filename[filename.find('('):filename.rfind('.')]
