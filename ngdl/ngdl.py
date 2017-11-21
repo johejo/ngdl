@@ -346,13 +346,14 @@ class Downloader(object):
         sess = self._sessions[host_id]  # type: requests.Session
         url = self._urls[host_id]
         parsed_url = urlparse(url)
-        self.logger.debug('Send request host_id: {} skip: {} host: {} header:  {}'
+        self.logger.debug('Send request index: {} skip: {} host: {} header:  {}'
                           .format(param['host_id'], x, parsed_url.hostname, param['headers']['Range']))
 
         try:
             resp = sess.get(verify=False, url=url, headers=param['headers'], timeout=10)
 
-        except ConnectionResetError:
+        except ConnectionResetError as e:
+            print(str(e))
             self.logger.debug('Reset Connection host_id: {} host:: {}'.format(host_id, self._urls[host_id]))
             return self._re_request_new_session(host_id, param)
 

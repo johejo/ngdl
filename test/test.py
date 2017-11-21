@@ -41,13 +41,13 @@ if __name__ == '__main__':
     ]
 
     urls0s = ['https://165.242.111.92/ubuntu-17.10-server-i386.template',
-              'https://165.242.111.93/ubuntu-17.10-server-i386.template',
-              # 'https://165.242.111.94/ubuntu-17.10-server-i386.template',
+              # 'https://165.242.111.93/ubuntu-17.10-server-i386.template',
+              'https://165.242.111.94/ubuntu-17.10-server-i386.template',
               ]
 
     urls1s = ['https://165.242.111.92/ubuntu-17.10-server-amd64.iso',
-              'https://165.242.111.93/ubuntu-17.10-server-amd64.iso',
-              # 'https://165.242.111.94/ubuntu-17.10-server-amd64.iso',
+              # 'https://165.242.111.93/ubuntu-17.10-server-amd64.iso',
+              'https://165.242.111.94/ubuntu-17.10-server-amd64.iso',
               ]
 
     urls4 = urls0s + urls3
@@ -66,6 +66,8 @@ if __name__ == '__main__':
     params = [(None, None, MODE_NORMAL), (None, None, MODE_ESTIMATE),
               (50, 3, MODE_CONVEX_DOWNWARD), (50, 3, MODE_CONVEX_UPWARD), (50, 1, MODE_CONVEX_DOWNWARD)
               ]
+    # pickle_dump = False
+    pickle_dump = True
 
     for param in params:
         param_str = str(param).replace(' ', '_')
@@ -76,7 +78,7 @@ if __name__ == '__main__':
                 pass
             begin = time.monotonic()
             with open('test', 'ab') as f:
-                with Downloader(urls=urls5,
+                with Downloader(urls=urls1s,
                                 split_size=1000000,
                                 logger=local_logger,
                                 parallel_num=1,
@@ -107,12 +109,9 @@ if __name__ == '__main__':
             stack_stdev_data.append(statistics.stdev(result['accumulation']))
             thp_data.append(thp)
 
-            # if i == 0:
-            #     with open('log_{}_{}.pickle'.format(i, param_str), 'wb') as f:
-            #         pickle.dump(result, f)
-
-            with open('log_{}_{}.pickle'.format(i, param_str), 'wb') as f:
-                pickle.dump(result, f)
+            if pickle_dump:
+                with open('log_{}_{}.pickle'.format(i, param_str), 'wb') as f:
+                    pickle.dump(result, f)
 
         rbn_mean = statistics.mean(rbn_mean_data)
         rbn_stdev = statistics.mean(rbn_stdev_data)
@@ -121,9 +120,10 @@ if __name__ == '__main__':
         thp_mean = statistics.mean(thp_data)
         thp_stdev = statistics.stdev(thp_data)
 
-        with open('statistic_{}.pickle'.format(param_str), 'wb') as f:
-            pickle.dump({'rbn_mean': rbn_mean, 'rbn_stdev': rbn_stdev,
-                         'stack_mean': stack_mean, 'stack_stdev': stack_stdev,
-                         'thp_mean': thp_mean, 'thp_stdev': thp_stdev,
-                         }, f)
+        if pickle_dump:
+            with open('statistic_{}.pickle'.format(param_str), 'wb') as f:
+                pickle.dump({'rbn_mean': rbn_mean, 'rbn_stdev': rbn_stdev,
+                             'stack_mean': stack_mean, 'stack_stdev': stack_stdev,
+                             'thp_mean': thp_mean, 'thp_stdev': thp_stdev,
+                             }, f)
         gc.collect()
